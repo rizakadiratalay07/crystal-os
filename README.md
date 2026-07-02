@@ -1,4 +1,4 @@
-# Crystal OS
+## Crystal OS
 
 Türkiye'nin yeni nesil yapay zekâ destekli işletim sistemi.
 

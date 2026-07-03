@@ -1,4 +1,4 @@
-## Crystal OS v1.3 sürümüne hoş geldiniz.
+## Crystal OS — Türkiye'nin Yeni Nesil İşletim Sistemi
 
 Türkiye'nin Yeni Nesil İşletim Sistemi projesinin ilk genel kullanıma sunulan sürümüdür.
 

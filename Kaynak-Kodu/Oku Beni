@@ -1,0 +1,22 @@
+Merhaba, Bilgisayar ortamınızda bu projeyi yerel ortamda sıfırdan oluşturulcak ise ilk önce
+işletim sisteminin "Linux" paket yöneticisinin "Debian" olmasının dikkat ediniz!
+Buradaki talimatları yanlış uygulamanız durumunda HİÇKİMSE sorumlu değildir dikkatli olunuz!
+
+1. Github'da "Code" tuşunun yanındaki ok tuşuna basarak seçeneklerden birin şeçin projeyi indirin.
+2. Projenin çalştırılcağı ortam sudo su (root) yetkili olmalıdır!
+3. Kesinlikle ortak bir klasörde (örnek: /Masaüstü)'ün içinde çalıştırılmamalı şöyle yapılmalı (örnek: /Masaüstü/Crystal-1.3)
+4. Terminal ortamında sudo su yetkisi alındıktan sonra crystal-tr.sh çalıştırılmalı ve "CrystalOS başarıyla oluşturuldu!" çıkmadan kesinlikle işlem yarıda kesilmemeli!
+
+DİPNOT:
+Eğer crystal-tr.sh'ı terminalde çalıştırdığınızda işlem yarıda kesilir ise kodu
+çalıştırmadan önce aşağıdaki kodu kopyalayın ve terminale yapıştırıp çalıştırın
+bunu yapmazsanız "mount" hatası alırsınız.
+
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_DIR="${SCRIPT_DIR}/crystal-build"
+CHROOT_DIR="${BUILD_DIR}/chroot"
+
+umount -R "${CHROOT_DIR}/dev" 2>/dev/null || true
+umount -R "${CHROOT_DIR}/proc" 2>/dev/null || true
+umount -R "${CHROOT_DIR}/sys" 2>/dev/null || true

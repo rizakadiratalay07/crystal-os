@@ -164,7 +164,7 @@ mkdir -p "${CHROOT_DIR}/etc/ssl/certs"
 cp /etc/ssl/certs/ca-certificates.crt "${CHROOT_DIR}/etc/ssl/certs/ca-certificates.crt"
 
 chroot "${CHROOT_DIR}" bash -c '
-    curl -L "https://github.com/rustdesk/rustdesk/releases/download/1.4.6/rustdesk-1.4.6-x86_64.deb" \
+    curl -L "https://github.com/rustdesk/rustdesk/releases/download/1.4.8/rustdesk-1.4.8-x86_64.deb" \
         -o /tmp/rustdesk.deb
     apt-get install -fy /tmp/rustdesk.deb
     rm -f /tmp/rustdesk.deb
@@ -308,6 +308,7 @@ EOF
 chmod +x "${CHROOT_DIR}/etc/profile.d/autostartx.sh"
 
 cat > "${CHROOT_DIR}/root/.xinitrc" <<'EOF'
+export XDG_SESSION_TYPE=x11
 export LANG=tr_TR.UTF-8
 export LC_ALL=tr_TR.UTF-8
 export LC_MESSAGES=tr_TR.UTF-8
@@ -859,23 +860,6 @@ Terminal=false
 Categories=Office;
 EOF
 
-cat > "${CHROOT_DIR}/usr/share/applications/rustdesk.desktop" <<EOF
-[Desktop Entry]
-Name=RustDesk
-Name[tr]=RustDesk
-GenericName=Remote Desktop
-GenericName[tr]=Uzak Masaüstü
-Comment=Remote Desktop
-Comment[tr]=Uzak Masaüstü Bağlantısı
-Exec=env XDG_SESSION_TYPE=x11 rustdesk %u
-Icon=rustdesk
-Terminal=false
-Type=Application
-StartupNotify=true
-Categories=Network;RemoteAccess;GTK;
-StartupWMClass=rustdesk
-EOF
-
 chmod 755 "${CHROOT_DIR}/usr/share/applications/pusula-finans.desktop"
 chown root:root "${CHROOT_DIR}/usr/share/applications/pusula-finans.desktop"
 
@@ -932,7 +916,7 @@ EOF
 chmod +x "${CHROOT_DIR}/root/Desktop/crystal-setup.desktop"
 
 mkdir -p "${CHROOT_DIR}/opt/Pusula-AI"
-rsync -a --exclude='venv/' "${SCRIPT_DIR}/Pusula-AI/" "${CHROOT_DIR}/opt/Pusula-AI/"
+rsync -a --exclude='venv/' --exclude='python_venv_olusturma.txt' "${SCRIPT_DIR}/Pusula-AI/" "${CHROOT_DIR}/opt/Pusula-AI/"
 chown -R root:root "${CHROOT_DIR}/opt/Pusula-AI"
 find "${CHROOT_DIR}/opt/Pusula-AI" -type d -exec chmod 755 {} \;
 find "${CHROOT_DIR}/opt/Pusula-AI" -type f -exec chmod 644 {} \;

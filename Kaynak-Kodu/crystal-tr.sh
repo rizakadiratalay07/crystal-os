@@ -164,7 +164,7 @@ mkdir -p "${CHROOT_DIR}/etc/ssl/certs"
 cp /etc/ssl/certs/ca-certificates.crt "${CHROOT_DIR}/etc/ssl/certs/ca-certificates.crt"
 
 chroot "${CHROOT_DIR}" bash -c '
-    curl -L "https://github.com/rustdesk/rustdesk/releases/download/1.4.8/rustdesk-1.4.8-x86_64.deb" \
+    curl -L "https://github.com/rustdesk/rustdesk/releases/download/1.4.9/rustdesk-1.4.9-x86_64.deb" \
         -o /tmp/rustdesk.deb
     apt-get install -fy /tmp/rustdesk.deb
     rm -f /tmp/rustdesk.deb

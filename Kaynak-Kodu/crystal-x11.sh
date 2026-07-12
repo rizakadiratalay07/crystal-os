@@ -92,7 +92,8 @@ DEBIAN_FRONTEND=noninteractive TMPDIR=/tmp chroot "${CHROOT_DIR}" apt-get instal
     kpartx \
     fdisk \
     util-linux \
-    soundconverter
+    soundconverter \
+    librepcb
 
 DEBIAN_FRONTEND=noninteractive TMPDIR=/tmp chroot "${CHROOT_DIR}" apt-get install -y \
     -o Dpkg::Options::="--force-confdef" \

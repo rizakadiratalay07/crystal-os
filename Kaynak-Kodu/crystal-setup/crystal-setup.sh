@@ -312,16 +312,19 @@ EOF
 chmod +x "$MOUNT/etc/profile.d/autostartx.sh"
 
 echo ".xinitrc yapılandırılıyor..."
-cat > "$USERHOME/.xinitrc" <<EOF
+cat > "$USERHOME/.xinitrc" <<'EOF'
+export XDG_SESSION_TYPE=x11
 export LANG=tr_TR.UTF-8
 export LC_ALL=tr_TR.UTF-8
 export LC_MESSAGES=tr_TR.UTF-8
 export LANGUAGE=tr_TR:tr
-xhost +local: &
-gio set /home/$USERNAME/Desktop/pusula-finans.desktop  metadata::trust true 2>/dev/null || true
+xhost +local:
+gio set "$HOME/Desktop/pusula-finans.desktop" metadata::trust true 2>/dev/null || true
+gio set "$HOME/Desktop/crystal-setup.desktop" metadata::trust true 2>/dev/null || true
+gio set "$HOME/Desktop/pusula-ai.desktop" metadata::trust true 2>/dev/null || true
 pulseaudio --start &
-xrdb -merge ~/.Xresources 2>/dev/null || true
-setxkbmap tr &
+xrdb -merge "$HOME/.Xresources"
+setxkbmap tr
 exec startlxqt
 EOF
 rm -f /home/$USERNAME/Desktop/crystal-setup.desktop 2>/dev/null || true
@@ -867,30 +870,19 @@ Categories=Finance;
 EOF
 chroot "$MOUNT" chown "$USERNAME:$USERNAME" /usr/share/applications/pusula-finans.desktop
 cp "$MOUNT/usr/share/applications/pusula-finans.desktop" "$USERHOME/Desktop/pusula-finans.desktop"
-cat > "$MOUNT/usr/share/applications/rustdesk.desktop" <<EOF
+cat > "$MOUNT/usr/share/applications/pusula-ai.desktop" <<EOF
 [Desktop Entry]
-Name=RustDesk
-Name[tr]=RustDesk
-GenericName=Remote Desktop
-GenericName[tr]=Uzak Masaüstü
-Comment=Remote Desktop
-Comment[tr]=Uzak Masaüstü Bağlantısı
-Exec=env XDG_SESSION_TYPE=x11 rustdesk %u
-Icon=rustdesk
-Terminal=false
 Type=Application
-StartupNotify=true
-Categories=Network;RemoteAccess;GTK;
-Keywords=internet;linux;dart;rust;remote-control;p2p;teamviewer;rust-lang;rdp;remote-desktop;vnc;
-Keywords[tr]=internet;linux;uzak-masaüstü;uzaktan-kontrol;p2p;
-Actions=new-window;
-StartupWMClass=rustdesk
-X-Desktop-File-Install-Version=0.23
-[Desktop Action new-window]
-Name=Open a New Window
-Name[tr]=Yeni Pencere Aç
-Exec=env XDG_SESSION_TYPE=x11 rustdesk %u
+Name=Pusula AI
+Path=/opt/Pusula-AI/v1.5
+Exec=python3 /opt/Pusula-AI/v1.5/pusula-ai.py
+Icon=/opt/Pusula-AI/img/logo.png
+Terminal=true
+Categories=Education;
 EOF
+cp "$MOUNT/usr/share/applications/pusula-ai.desktop" \
+    "$USERHOME/Desktop/pusula-ai.desktop"
+chmod +x "$USERHOME/Desktop/pusula-ai.desktop"
 cat > "$MOUNT/usr/share/applications/vlc.desktop" <<'EOF'
 [Desktop Entry]
 Version=1.0

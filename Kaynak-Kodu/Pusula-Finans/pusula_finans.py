@@ -9,9 +9,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import f1_score
 
-# Programcı: Rıza Kadir ATALAY, Ali Emre ERYILMAZ
-# Telegram API için Ali Emre ERYILMAZ'a teşekkürler.
-
 matplotlib.use("QtAgg"); warnings.filterwarnings("ignore")
 INITIAL_CAPITAL, COOLDOWN_SECONDS = 10_000.0, 20
 E = 1e-9
@@ -438,20 +435,13 @@ class Worker(QtCore.QThread):
         try:
             kw = dict(auto_adjust=False, progress=False, threads=False)
             fx = self._fetch_usdtry() if self.currency == "USD" else 1.0
-            if self.tf == "4H":
-                raw = yf.download(self.sym, interval="60m", period="2y", **kw)
-                if raw is None or raw.empty: self.error.emit("Veri yok: " + self.sym); return
-                raw = self._fix(raw).sort_index()
-                raw = self._resample(raw, pd.Timedelta(hours=4))
-                self.ready.emit(raw, fx)
-                return
             raw = yf.download(self.sym, interval="1d", period="5y", **kw)
             if raw is None or raw.empty: self.error.emit("Veri yok: " + self.sym); return
             raw = self._fix(raw).sort_index()
             if self.tf == "2D":
                 raw = self._resample(raw, "2D")
-            elif self.tf == "3D":
-                raw = self._resample(raw, "3D")
+            elif self.tf == "1W":
+                raw = self._resample(raw, "W")
             self.ready.emit(raw, fx)
         except Exception as e:
             self.error.emit(str(e))
@@ -532,7 +522,7 @@ class App(QtWidgets.QMainWindow):
 
         add(QtWidgets.QLabel("Periyot:"), 0)
         self.tf = QtWidgets.QComboBox()
-        for n, d in [("4 Saat", "4H"), ("1 Gün", "1D"), ("2 Gün", "2D"), ("3 Gün", "3D")]:
+        for n, d in [("1 Gün", "1D"), ("2 Gün", "2D"), ("1 Hafta", "1W")]:
             self.tf.addItem(n, d)
         add(self.tf)
 
@@ -649,10 +639,29 @@ class App(QtWidgets.QMainWindow):
         s = self.sym.text().strip().upper(); return s if s.endswith(".IS") else s+".IS"
 
     @staticmethod
-    def _update_rsi_m(df):
-        mn = df[["MACD","MACD_SIG","MACD_H"]].min().min()
-        sp = max(df[["MACD","MACD_SIG","MACD_H"]].max().max() - mn, 1e-6)
-        df["RSI_M"] = mn + df["RSI"]/100*sp
+    def _update_sqz_colors(df):
+        vals = df["SQZ_VAL"].values
+        prev_val = np.nan
+        bcolors = []
+        for i, v in enumerate(vals):
+            if np.isnan(v) or np.isinf(v):
+                bcolors.append('gray')
+            else:
+                if v > 0:
+                    if not np.isnan(prev_val) and v > prev_val:
+                        bcolors.append('#00FF00')
+                    else:
+                        bcolors.append('#008000')
+                elif v < 0:
+                    if not np.isnan(prev_val) and v < prev_val:
+                        bcolors.append('#FF0000')
+                    else:
+                        bcolors.append('#800000')
+                else:
+                    bcolors.append('gray')
+            if not np.isnan(v) and not np.isinf(v):
+                prev_val = v
+        return bcolors
 
     def load(self):
         s = self._sym()
@@ -670,8 +679,7 @@ class App(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.critical(self, "Hata", f"Kolonlar eksik: {list(df.columns)}")
             self._start_cooldown(); return
 
-        tf = self.tf.currentData()
-        years = 2 if tf == "4H" else 5
+        years = 5
         df = df.loc[df.index >= df.index.max() - pd.DateOffset(years=years)].dropna(
             subset=["Open", "High", "Low", "Close"])
 
@@ -679,10 +687,10 @@ class App(QtWidgets.QMainWindow):
             for col in ["Open","High","Low","Close"]: df[col] = df[col]/fx_rate
 
         df = fib_bb(squeeze_momentum(macd_rsi(alpha_trend(df)))); df["ML_BUY"] = df["ML_SELL"] = np.nan
-        self._update_rsi_m(df); self._df = df; self._view_offset = 0; self._render(df); self._start_cooldown()
+        self._df = df; self._view_offset = 0; self._render(df); self._start_cooldown()
         self.progress.setText("ML eğitiliyor...")
         if self._ml_worker and self._ml_worker.isRunning(): self._ml_worker.terminate()
-        self._ml_worker = MLWorker(df, tf=tf)
+        self._ml_worker = MLWorker(df, tf="1D")
         self._ml_worker.done.connect(self._on_ml_done); self._ml_worker.error.connect(self._on_ml_err)
         self._ml_worker.start()
 
@@ -692,7 +700,8 @@ class App(QtWidgets.QMainWindow):
         self._at_result, self._ml_result = results; self._ml_info = info; self._df = df
         a, ta, tm = info.get("accuracy",0), (self._at_result or {}).get("total_return",0), (self._ml_result or {}).get("total_return",0)
         self.progress.setText(f"ML Doğruluk: {a:.1f}%  │  AT: {ta:+.1f}%  │  ML: {tm:+.1f}%")
-        self.bt_btn.setEnabled(True); self._update_rsi_m(df); self._render(self._current_view_df())
+        self.bt_btn.setEnabled(True)
+        self._render(self._current_view_df())
 
     def show_backtest(self):
         if self._df is None: return
@@ -707,7 +716,7 @@ class App(QtWidgets.QMainWindow):
         self._clear()
         chart_t = self.chart_type.currentData()
         plot_df = self._to_heiken_ashi(df) if chart_t == "heikinashi" else df
-        mc = df["MACD_H"].fillna(0).apply(lambda x: "green" if x > 0 else ("red" if x < 0 else "gray")).tolist()
+        sqz_colors = self._update_sqz_colors(plot_df)
         apds = [mpf.make_addplot(plot_df["AlphaTrend"], type="line", width=1.5, panel=0),
                 mpf.make_addplot(plot_df["AT2"], type="line", width=1.5, panel=0, linestyle="dashdot"),
                 mpf.make_addplot(plot_df["FBB_BASIS"], type="line", panel=0, width=1.8, color="#FF00FF"),
@@ -723,10 +732,7 @@ class App(QtWidgets.QMainWindow):
                 mpf.make_addplot(plot_df["FBB_L0382"], type="line", panel=0, width=0.7, color="#787B86", linestyle="solid"),
                 mpf.make_addplot(plot_df["FBB_U0236"], type="line", panel=0, width=0.7, color="#787B86", linestyle="solid"),
                 mpf.make_addplot(plot_df["FBB_L0236"], type="line", panel=0, width=0.7, color="#787B86", linestyle="solid"),
-                mpf.make_addplot(plot_df["MACD_H"], type="bar", panel=1, width=0.7, color=mc),
-                mpf.make_addplot(plot_df["MACD"], type="line", panel=1, width=1.0),
-                mpf.make_addplot(plot_df["MACD_SIG"], type="line", panel=1, width=1.0),
-                mpf.make_addplot(plot_df["RSI_M"], type="line", panel=1, width=1.5, color="purple")]
+                mpf.make_addplot(plot_df["SQZ_VAL"], type="bar", panel=1, width=0.7, color=sqz_colors)]
         for col, mk, sz, cl in [("AT_BUY","^",60,"#00e676"),("AT_SELL","v",60,"#ff1744"),
                                   ("ML_BUY","^",90,"#2979ff"),("ML_SELL","v",90,"#ff6d00")]:
             if plot_df[col].notna().any():
@@ -749,12 +755,6 @@ class App(QtWidgets.QMainWindow):
         self.canvas = Canvas(fig, parent=self.pw); self.pl.addWidget(self.canvas)
         self.toolbar = NavigationToolbar(self.canvas, self); self.pl.insertWidget(0, self.toolbar)
         self.axes = axes; self.canvas.mpl_connect("scroll_event", self._scroll)
-        if len(fig.get_axes()) >= 2:
-            mn = df[["MACD","MACD_SIG","MACD_H"]].min().min()
-            sp = max(df[["MACD","MACD_SIG","MACD_H"]].max().max() - mn, 1e-6)
-            ax = fig.get_axes()[-1]
-            ax.axhline(mn+0.7*sp, ls="--", lw=0.6, color="purple")
-            ax.axhline(mn+0.3*sp, ls="--", lw=0.6, color="purple")
         if view_limits and len(view_limits) == len(flat):
             for ax, (xl, yl) in zip(flat, view_limits):
                 try:

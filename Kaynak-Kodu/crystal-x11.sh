@@ -93,7 +93,7 @@ DEBIAN_FRONTEND=noninteractive TMPDIR=/tmp chroot "${CHROOT_DIR}" apt-get instal
     fdisk \
     util-linux \
     soundconverter \
-    librepcb
+    inkscape
 
 DEBIAN_FRONTEND=noninteractive TMPDIR=/tmp chroot "${CHROOT_DIR}" apt-get install -y \
     -o Dpkg::Options::="--force-confdef" \

@@ -5,6 +5,8 @@ if [ ! -e /dev/fd ]; then
     ln -s /proc/self/fd /dev/fd
 fi
 
+# Programcı: Rıza Kadir ATALAY
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/crystal-build"
 CHROOT_DIR="${BUILD_DIR}/chroot"
@@ -93,7 +95,8 @@ DEBIAN_FRONTEND=noninteractive TMPDIR=/tmp chroot "${CHROOT_DIR}" apt-get instal
     fdisk \
     util-linux \
     soundconverter \
-    inkscape
+    scrot \
+    xdotool
 
 DEBIAN_FRONTEND=noninteractive TMPDIR=/tmp chroot "${CHROOT_DIR}" apt-get install -y \
     -o Dpkg::Options::="--force-confdef" \

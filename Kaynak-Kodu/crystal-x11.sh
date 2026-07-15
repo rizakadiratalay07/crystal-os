@@ -96,7 +96,8 @@ DEBIAN_FRONTEND=noninteractive TMPDIR=/tmp chroot "${CHROOT_DIR}" apt-get instal
     util-linux \
     soundconverter \
     scrot \
-    xdotool
+    xdotool \
+    fonts-noto-color-emoji
 
 DEBIAN_FRONTEND=noninteractive TMPDIR=/tmp chroot "${CHROOT_DIR}" apt-get install -y \
     -o Dpkg::Options::="--force-confdef" \

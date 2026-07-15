@@ -8,6 +8,10 @@ from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier, HistG
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import f1_score
+import subprocess
+
+# Programcı: Rıza Kadir ATALAY, Ali Emre ERYILMAZ
+# Grafiği Paylaşmaya yarayan API uygulamasını yaptığı için Ali Emre ERYILMAZ'a teşekkürler.
 
 matplotlib.use("QtAgg"); warnings.filterwarnings("ignore")
 INITIAL_CAPITAL, COOLDOWN_SECONDS = 10_000.0, 20
@@ -548,9 +552,12 @@ class App(QtWidgets.QMainWindow):
         self.btn_next = QtWidgets.QPushButton(">"); self.btn_next.setFixedWidth(28)
         self.btn_next.setToolTip("İleri sar"); self.btn_next.clicked.connect(self._step_right); add(self.btn_next)
 
-        self.btn = QtWidgets.QPushButton("Yükle"); self.btn.setFixedWidth(90); self.btn.clicked.connect(self.load); add(self.btn)
+        self.btn = QtWidgets.QPushButton("Yükle"); self.btn.setFixedWidth(45); self.btn.clicked.connect(self.load); add(self.btn)
         self.bt_btn = QtWidgets.QPushButton("Backtest-ML Raporu"); self.bt_btn.setEnabled(False)
         self.bt_btn.clicked.connect(self.show_backtest); add(self.bt_btn)
+
+        self.share_btn = QtWidgets.QPushButton("Grafiği Paylaş"); self.share_btn.setFixedWidth(90)
+        self.share_btn.clicked.connect(self.share_graph); add(self.share_btn)
 
         self.cooldown_lbl = QtWidgets.QLabel(""); self.cooldown_lbl.setFixedWidth(150)
         self.cooldown_lbl.setStyleSheet("color:#ff9800;font-weight:bold;padding:0 4px;")
@@ -562,6 +569,14 @@ class App(QtWidgets.QMainWindow):
         self.pw = QtWidgets.QWidget(); self.pw.setContentsMargins(0,0,0,0)
         self.pl = QtWidgets.QVBoxLayout(self.pw); self.pl.setContentsMargins(0,0,0,0); self.pl.setSpacing(0)
         v.addWidget(self.pw, 1); self.canvas = self.toolbar = self.worker = self.axes = None
+
+    def share_graph(self):
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            grafik_paylas_path = os.path.join(script_dir, "grafiği_paylaş.py")
+            subprocess.Popen([sys.executable, grafik_paylas_path])
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, "Hata", f"grafiği_paylaş.py çalıştırılamadı: {e}")
 
     def _cycle_step(self):
         self._step_index = (self._step_index + 1) % len(self._STEP_VALUES)

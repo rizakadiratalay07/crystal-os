@@ -129,7 +129,9 @@ DEBIAN_FRONTEND=noninteractive TMPDIR=/tmp chroot "${CHROOT_DIR}" apt-get instal
     xserver-xorg-input-all \
     xserver-xorg-video-all \
     xinit \
-    x11-xserver-utils
+    x11-xserver-utils \
+    mesa-utils
+
 
 DEBIAN_FRONTEND=noninteractive TMPDIR=/tmp chroot "${CHROOT_DIR}" apt-get install -y \
     -o Dpkg::Options::="--force-confdef" \
@@ -213,7 +215,10 @@ DEBIAN_FRONTEND=noninteractive TMPDIR=/tmp chroot "${CHROOT_DIR}" apt-get instal
     -o Dpkg::Options::="--force-confold" \
     --no-install-recommends \
     nvidia-kernel-dkms \
-    xserver-xorg-video-nvidia
+    xserver-xorg-video-nvidia \
+    libglx-nvidia0 \
+    libegl-nvidia0 \
+    nvidia-smi
 
 DEBIAN_FRONTEND=noninteractive TMPDIR=/tmp chroot "${CHROOT_DIR}" apt-get install -y \
     -o Dpkg::Options::="--force-confdef" \
@@ -701,6 +706,8 @@ rm -f "${CHROOT_DIR}/usr/share/applications/qps.desktop"
 rm -f "${CHROOT_DIR}/usr/share/applications/qt5ct.desktop"
 rm -f "${CHROOT_DIR}/usr/share/applications/qt6ct.desktop"
 rm -f "${CHROOT_DIR}/usr/share/applications/org.flameshot.Flameshot.desktop"
+rm -rf "${CHROOT_DIR}/usr/share/doc"/*
+rm -rf "${CHROOT_DIR}/usr/share/man"/*
 
 DESKTOP="${CHROOT_DIR}/usr/share/applications/org.kde.falkon.desktop"
 if [ -f "$DESKTOP" ]; then

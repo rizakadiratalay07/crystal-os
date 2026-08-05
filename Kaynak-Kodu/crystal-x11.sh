@@ -45,6 +45,11 @@ echo "en_US.UTF-8 UTF-8" >> "${CHROOT_DIR}/etc/locale.gen"
 echo "tr_TR.UTF-8 UTF-8" >> "${CHROOT_DIR}/etc/locale.gen"
 chroot "${CHROOT_DIR}" locale-gen
 
+echo "Europe/Istanbul" > "${CHROOT_DIR}/etc/timezone"
+ln -sf /usr/share/zoneinfo/Europe/Istanbul "${CHROOT_DIR}/etc/localtime"
+echo "0.0 0 0.0
+0
+UTC" > "${CHROOT_DIR}/etc/adjtime"
 cat > "${CHROOT_DIR}/etc/default/locale" <<EOF
 LANG=tr_TR.UTF-8
 LC_ALL=tr_TR.UTF-8
@@ -246,7 +251,8 @@ chroot "${CHROOT_DIR}" pip3 install --break-system-packages --root-user-action=i
     scikit-learn \
     PyQt6 \
     sentencepiece \
-    requests
+    requests \
+    ijson
 
 chroot "${CHROOT_DIR}" pip3 install --break-system-packages --root-user-action=ignore \
     --index-url https://download.pytorch.org/whl/cpu \
@@ -285,6 +291,7 @@ LIVE_USERNAME="root"
 LIVE_USER_FULLNAME="root"
 LIVE_NOROOT=
 LIVE_NOAUTOLOGIN=
+LIVE_TIMEZONE="Europe/Istanbul"
 EOF
 
 rm -f "${CHROOT_DIR}/lib/live/config/1160-openssh-server" 2>/dev/null || true
@@ -640,7 +647,7 @@ chroot "${CHROOT_DIR}" ln -sf /opt/crystal-setup/nvidia-llm-setup.sh /usr/local/
 chmod +x "${CHROOT_DIR}/opt/crystal-setup/nvidia-llm-setup.sh"
 
 mkdir -p "${CHROOT_DIR}/opt/Pusula-AI"
-rsync -a --exclude='venv/' --exclude='python_venv_olusturma.txt' "${SCRIPT_DIR}/Pusula-AI/" "${CHROOT_DIR}/opt/Pusula-AI/"
+rsync -a --exclude='v2.0/' "${SCRIPT_DIR}/Pusula-AI/" "${CHROOT_DIR}/opt/Pusula-AI/"
 chown -R root:root "${CHROOT_DIR}/opt/Pusula-AI"
 find "${CHROOT_DIR}/opt/Pusula-AI" -type d -exec chmod 755 {} \;
 find "${CHROOT_DIR}/opt/Pusula-AI" -type f -exec chmod 644 {} \;

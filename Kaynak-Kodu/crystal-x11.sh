@@ -252,7 +252,9 @@ chroot "${CHROOT_DIR}" pip3 install --break-system-packages --root-user-action=i
     PyQt6 \
     sentencepiece \
     requests \
-    ijson
+    ijson \
+    pandas \
+    pyarrow
 
 chroot "${CHROOT_DIR}" pip3 install --break-system-packages --root-user-action=ignore \
     --index-url https://download.pytorch.org/whl/cpu \
@@ -458,7 +460,7 @@ dateFormat=short
 dateLongNames=false
 dateShowDoW=false
 dateShowYear=false
-defaultTimeZone=Europe/Istanbul
+defaultTimeZone=Etc/GMT-0
 formatType=short-timeonly
 showDate=false
 showTimezone=false
@@ -643,11 +645,11 @@ Categories=System;
 EOF
 chmod +x "${CHROOT_DIR}/root/Desktop/crystal-setup.desktop"
 
-chroot "${CHROOT_DIR}" ln -sf /opt/crystal-setup/nvidia-llm-setup.sh /usr/local/bin/nvidia-llm-setup
-chmod +x "${CHROOT_DIR}/opt/crystal-setup/nvidia-llm-setup.sh"
+chroot "${CHROOT_DIR}" ln -sf /opt/Pusula-AI/nvidia-llm-setup.sh /usr/local/bin/nvidia-llm-setup
+chmod +x "${CHROOT_DIR}/opt/Pusula-AI/nvidia-llm-setup.sh"
 
 mkdir -p "${CHROOT_DIR}/opt/Pusula-AI"
-rsync -a --exclude='v2.0/' "${SCRIPT_DIR}/Pusula-AI/" "${CHROOT_DIR}/opt/Pusula-AI/"
+rsync -a --exclude='v1.5/' --exclude='v2.0/' --exclude='v2.5/turkish-llm-32b-gguf/' "${SCRIPT_DIR}/Pusula-AI/" "${CHROOT_DIR}/opt/Pusula-AI/"
 chown -R root:root "${CHROOT_DIR}/opt/Pusula-AI"
 find "${CHROOT_DIR}/opt/Pusula-AI" -type d -exec chmod 755 {} \;
 find "${CHROOT_DIR}/opt/Pusula-AI" -type f -exec chmod 644 {} \;
@@ -655,10 +657,10 @@ cat > "${CHROOT_DIR}/usr/share/applications/pusula-ai.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Pusula AI
-Path=/opt/Pusula-AI/v1.5
-Exec=python3 /opt/Pusula-AI/v1.5/pusula-ai.py
+Path=/opt/Pusula-AI/v2.5
+Exec=python3 /opt/Pusula-AI/v2.5/pusula-ai.py
 Icon=/opt/Pusula-AI/img/logo.png
-Terminal=true
+Terminal=false
 Categories=Education;
 EOF
 

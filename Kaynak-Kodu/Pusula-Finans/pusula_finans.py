@@ -12,30 +12,21 @@ import subprocess
 # Grafiği Paylaşmaya yarayan API uygulamasını yaptığı için Ali Emre ERYILMAZ'a teşekkürler.
 
 matplotlib.use("QtAgg")
-matplotlib.rcParams.update({"font.family":"DejaVu Sans","font.weight":"normal","axes.titleweight":"normal","axes.labelweight":"normal","figure.titleweight":"normal","legend.fontsize":9})
+matplotlib.rcParams.update({
+    "font.family":"DejaVu Sans",
+    "font.weight":"normal",
+    "axes.titleweight":"normal",
+    "axes.labelweight":"normal",
+    "figure.titleweight":"normal",
+    "legend.fontsize":9,
+    "path.simplify": True,
+    "path.simplify_threshold": 0.1,
+    "agg.path.chunksize": 10000
+})
 warnings.filterwarnings("ignore")
 INITIAL_CAPITAL,COOLDOWN_SECONDS=10_000.0,20
 E=1e-9
-FIB_LEVELS=[0.236,0.382,0.5,0.618,0.764,1.0]
-def atr_sma(df,p):
-    pc=df["Close"].shift(1)
-    return pd.concat([df["High"]-df["Low"],(df["High"]-pc).abs(),(df["Low"]-pc).abs()],axis=1).max(axis=1).rolling(p,min_periods=1).mean()
-def rsi(s,p):
-    d=s.diff()
-    return 100-100/(1+d.clip(lower=0).ewm(alpha=1/p,adjust=False,min_periods=1).mean()/(-d.clip(upper=0)).ewm(alpha=1/p,adjust=False,min_periods=1).mean().replace(0,np.nan))
-def mfi(df,p):
-    tp=(df["High"]+df["Low"]+df["Close"])/3
-    mf=tp*df["Volume"]
-    prev=tp.shift(1)
-    pos=mf.where(tp>prev,0.0).rolling(p,min_periods=1).sum()
-    neg=mf.where(tp<=prev,0.0).rolling(p,min_periods=1).sum()
-    return (100*pos/(pos+neg).replace(0,np.nan)).fillna(50)
-def barssince(c):
-    r,cnt=np.full(len(c),np.nan),np.nan
-    for i,v in enumerate(c):
-        cnt=0 if v else (np.nan if np.isnan(cnt) else cnt+1)
-        r[i]=cnt
-    return pd.Series(r,index=c.index)
+
 def alternating_signals(buy,sell):
     bc,sc,in_pos=buy.copy(),sell.copy(),False
     for idx in buy.index:
@@ -47,36 +38,7 @@ def alternating_signals(buy,sell):
             if in_pos:in_pos=False
             else:sc.loc[idx]=np.nan
     return bc,sc
-def alpha_trend(df,AP=14,coeff=1.0):
-    atr=atr_sma(df,AP)
-    cond=(mfi(df,AP) if ("Volume" in df.columns and (df["Volume"]>0).any()) else rsi(df["Close"],AP))>=50
-    upT=df["Low"]-atr*coeff
-    dnT=df["High"]+atr*coeff
-    at,prev=np.full(len(df),np.nan),np.nan
-    for i in range(len(df)):
-        c=bool(cond.iloc[i])
-        if i==0:at[i]=upT.iloc[i] if c else dnT.iloc[i]
-        elif c:at[i]=prev if not np.isnan(prev) and upT.iloc[i]<prev else upT.iloc[i]
-        else:at[i]=prev if not np.isnan(prev) and dnT.iloc[i]>prev else dnT.iloc[i]
-        prev=at[i]
-    df["AlphaTrend"]=at
-    df["AT2"]=df["AlphaTrend"].shift(2)
-    s3=df["AlphaTrend"].shift(3)
-    bx=((df["AlphaTrend"]>df["AT2"])&(df["AlphaTrend"].shift(1)<=s3)).fillna(False)
-    sx=((df["AlphaTrend"]<df["AT2"])&(df["AlphaTrend"].shift(1)>=s3)).fillna(False)
-    bs=bx&(barssince(bx.shift(1).fillna(False))>barssince(sx))
-    ss=sx&(barssince(sx.shift(1).fillna(False))>barssince(bx))
-    df["AT_BUY"],df["AT_SELL"]=alternating_signals(pd.Series(np.where(bs,df["AT2"]*0.9999,np.nan),index=df.index),pd.Series(np.where(ss,df["AT2"]*1.0001,np.nan),index=df.index))
-    return df
-def macd_rsi(df,fast=12,slow=26,sig=9,rp=14):
-    s=df["Close"]
-    m=s.ewm(span=fast,adjust=False).mean()-s.ewm(span=slow,adjust=False).mean()
-    g=m.ewm(span=sig,adjust=False).mean()
-    df["MACD"]=m
-    df["MACD_SIG"]=g
-    df["MACD_H"]=m-g
-    df["RSI"]=rsi(s,rp)
-    return df
+
 def _linreg(series,length):
     result=np.full(len(series),np.nan)
     arr=series.values.astype(float)
@@ -89,6 +51,7 @@ def _linreg(series,length):
         ym=y.mean()
         result[i]=ym+((x-xm)*(y-ym)).sum()/ss*(length-1-xm)
     return pd.Series(result,index=series.index)
+
 def squeeze_momentum(df,bb_len=20,bb_m=2.0,kc_len=20,kc_m=1.5):
     cl,hi,lo=df["Close"],df["High"],df["Low"]
     basis=cl.rolling(bb_len,min_periods=1).mean()
@@ -104,72 +67,28 @@ def squeeze_momentum(df,bb_len=20,bb_m=2.0,kc_len=20,kc_m=1.5):
     ll=lo.rolling(kc_len,min_periods=1).min()
     df["SQZ_VAL"]=_linreg(cl-((hh+ll)/2+ma)/2,kc_len)
     return df
-def fib_bb(df,length=100,mult=2.0):
-    src=(df["High"]+df["Low"]+df["Close"])/3
-    vo=pd.to_numeric(df["Volume"],errors="coerce").replace(0,np.nan).fillna(1.0)
-    vws=(src*vo).rolling(length,min_periods=length).sum()
-    vws_w=vo.rolling(length,min_periods=length).sum()
-    basis=(vws/vws_w).fillna(src.rolling(length,min_periods=1).mean())
-    dev=src.rolling(length,min_periods=length).std(ddof=0)*mult
-    fallback_dev=src.rolling(max(10,length//2),min_periods=5).std(ddof=0)*mult
-    dev=dev.fillna(fallback_dev).fillna(0.0).clip(lower=0.0)
-    df["FBB_BASIS"]=basis
-    for fl in FIB_LEVELS:
-        tag=str(fl).replace(".","")
-        df[f"FBB_U{tag}"]=(basis+fl*dev).clip(lower=0.0)
-        df[f"FBB_L{tag}"]=(basis-fl*dev).clip(lower=0.0)
+
+def donchian(df,length=20):
+    upper=df["High"].rolling(length,min_periods=1).max()
+    lower=df["Low"].rolling(length,min_periods=1).min()
+    basis=(upper+lower)/2
+    df["DC_UPPER"]=upper
+    df["DC_LOWER"]=lower
+    df["DC_BASIS"]=basis
     return df
+
 class MLEngine:
     def __init__(self,horizon=5,threshold=0.005):
         self.horizon=horizon
         self.threshold=threshold
         self.model=None
         self.scaler=StandardScaler()
+
     def _features(self,df):
         f=pd.DataFrame(index=df.index)
-        cl,hi,lo=df["Close"],df["High"],df["Low"]
-        vo=df["Volume"] if ("Volume" in df.columns and (df["Volume"]>0).any()) else None
-        h=df["MACD_H"]
-        rs=df["RSI"]
-        ret=cl.pct_change()
-        f["rsi"]=rs
-        f["macd"]=df["MACD"]
-        f["macd_sig"]=df["MACD_SIG"]
-        f["macd_h"]=h
-        f["at_dir"]=(df["AlphaTrend"]>df["AT2"]).astype(float)
-        f["at_slope"]=df["AlphaTrend"].diff()
-        f["close_vs_at"]=(cl-df["AlphaTrend"])/(df["AlphaTrend"].abs()+E)
-        f["hl_ratio"]=(hi-lo)/cl.abs().clip(lower=E)
-        f["body_ratio"]=(cl-df["Open"]).abs()/(hi-lo).abs().clip(lower=E)
-        for p in [2,3,5,10,20]:
-            f[f"mom_{p}"]=cl.pct_change(p)
-        for p in [5,10,20]:
-            f[f"vol_{p}"]=ret.rolling(p).std()
-        for p in [10,20,50,100]:
-            sma=cl.rolling(p,min_periods=1).mean()
-            f[f"above_sma{p}"]=(cl>sma).astype(float)
-            f[f"sma{p}_slope"]=sma.pct_change(max(p//5,2))
-            f[f"close_vs_sma{p}"]=(cl-sma)/(sma.abs()+E)
-        for p in [9,21]:
-            ema=cl.ewm(span=p,adjust=False).mean()
-            f[f"close_vs_ema{p}"]=(cl-ema)/(ema.abs()+E)
-        for p in [9,14]:
-            lo_p=lo.rolling(p,min_periods=1).min()
-            hi_p=hi.rolling(p,min_periods=1).max()
-            sk=100*(cl-lo_p)/(hi_p-lo_p).clip(lower=E)
-            f[f"stoch{p}_k"]=sk
-            f[f"stoch{p}_d"]=sk.rolling(3,min_periods=1).mean()
-            f[f"stoch{p}_diff"]=sk-f[f"stoch{p}_d"]
-        atr=atr_sma(df,14)
-        f["atr_ratio"]=atr/(cl.abs()+E)
-        f["atr_slope"]=atr.pct_change(5)
-        if vo is not None:
-            f["vol_ratio"]=vo/(vo.rolling(20,min_periods=1).mean()+E)
-            f["vol_slope"]=vo.pct_change(5)
-            f["obv_slope"]=(np.sign(cl.diff())*vo).rolling(10).sum()
-            vwap=(vo*cl).rolling(20).sum()/(vo.rolling(20).sum().clip(lower=E))
-            f["vwap_ratio"]=(cl/vwap.clip(lower=E)).clip(0.5,2.0)
+        cl=df["Close"]
         sv=df["SQZ_VAL"]
+        # SQZMOM temel özellikler
         f["sqz_val"]=sv
         f["sqz_val_pos"]=(sv>0).astype(float)
         f["sqz_val_rising"]=(sv>sv.shift(1)).astype(float)
@@ -178,60 +97,55 @@ class MLEngine:
         f["sqz_on"]=df["SQZ_ON"]
         f["sqz_off"]=df["SQZ_OFF"]
         f["sqz_val_slope"]=sv.diff(3)
-        fb=df["FBB_BASIS"]
-        u6=df["FBB_U10"]
-        l6=df["FBB_L10"]
-        bw=(u6-l6).replace(0,np.nan)
-        f["fbb_pct"]=(cl-l6)/bw.fillna(1)
-        f["fbb_width"]=bw/(fb.abs()+E)
-        f["fbb_basis_dist"]=(cl-fb)/(fb.abs()+E)
-        f["fbb_upper_dist"]=(cl-u6)/(cl.abs()+E)
-        f["fbb_lower_dist"]=(cl-l6)/(cl.abs()+E)
-        f["fbb_squeeze"]=bw/(bw.rolling(50,min_periods=1).mean()+E)
-        u4=df["FBB_U0618"]
-        l4=df["FBB_L0618"]
-        f["fbb_inner_pct"]=(cl-l4)/((u4-l4).replace(0,np.nan).fillna(1))
-        f["fbb_above_basis"]=(cl>fb).astype(float)
-        f["fbb_zone"]=pd.cut(f["fbb_pct"],bins=[-np.inf,0,0.236,0.382,0.5,0.618,0.764,1.0,np.inf],labels=False).astype(float)
-        f["macd_h_pos"]=(h>0).astype(float)
-        f["macd_h_rising"]=(h>h.shift(1)).astype(float)
-        f["macd_h_accel"]=h.diff()
-        f["macd_h_accel2"]=h.diff().diff()
-        f["macd_cross_up"]=((h>0)&(h.shift(1)<=0)).astype(float)
-        f["macd_cross_down"]=((h<0)&(h.shift(1)>=0)).astype(float)
-        f["macd_h_vs_sma5"]=h-h.rolling(5,min_periods=1).mean()
-        hc=(h>0).astype(int)
-        f["macd_h_streak"]=hc.groupby((hc!=hc.shift()).cumsum()).cumcount()*hc
-        f["rsi_slope"]=rs.diff(3)
-        f["rsi_ob"]=(rs>70).astype(float)
-        f["rsi_os"]=(rs<30).astype(float)
-        f["rsi_vs_sma"]=rs-rs.rolling(14,min_periods=1).mean()
-        at_bull=(df["AlphaTrend"]>df["AT2"]).astype(int)
-        f["at_bull_streak"]=at_bull.groupby((at_bull!=at_bull.shift()).cumsum()).cumcount()*at_bull
-        f["rsi_x_macdh"]=(rs/100)*h
-        f["at_x_macdh"]=f["at_dir"]*f["macd_h_pos"]
-        f["rsi_x_at"]=(rs/100)*f["at_dir"]
-        f["sqz_x_at"]=f["at_dir"]*f["sqz_val_pos"]
-        f["sqz_x_rsi"]=(rs/100)*sv
-        f["fbb_x_at"]=f["at_dir"]*f["fbb_above_basis"]
-        f["fbb_x_rsi"]=(rs/100)*f["fbb_pct"]
-        for col in ["rsi","macd_h","at_dir","mom_5","vol_10","macd_h_pos","macd_h_rising","close_vs_at","sqz_val","sqz_val_pos","sqz_on","fbb_pct","fbb_above_basis"]:
+        # SQZMOM türevleri
+        f["sqz_val_sma5"]=sv.rolling(5,min_periods=1).mean()
+        f["sqz_val_sma10"]=sv.rolling(10,min_periods=1).mean()
+        f["sqz_val_std10"]=sv.rolling(10,min_periods=1).std()
+        f["sqz_val_zscore"]=(sv-f["sqz_val_sma10"])/(f["sqz_val_std10"]+E)
+        f["sqz_val_high5"]=sv.rolling(5,min_periods=1).max()
+        f["sqz_val_low5"]=sv.rolling(5,min_periods=1).min()
+        f["sqz_val_rank20"]=sv.rolling(20,min_periods=1).apply(lambda x: (x[-1] > x[:-1]).mean(), raw=True)
+        # Donchian temel özellikler
+        dc_upper=df["DC_UPPER"]
+        dc_lower=df["DC_LOWER"]
+        dc_basis=df["DC_BASIS"]
+        dc_width=(dc_upper-dc_lower).replace(0,np.nan)
+        f["dc_pct"]=(cl-dc_lower)/dc_width.fillna(1)
+        f["dc_width"]=dc_width/(dc_basis.abs()+E)
+        f["dc_basis_dist"]=(cl-dc_basis)/(dc_basis.abs()+E)
+        f["dc_upper_dist"]=(cl-dc_upper)/(cl.abs()+E)
+        f["dc_lower_dist"]=(cl-dc_lower)/(cl.abs()+E)
+        f["dc_squeeze"]=dc_width/(dc_width.rolling(50,min_periods=1).mean()+E)
+        f["dc_above_basis"]=(cl>dc_basis).astype(float)
+        f["dc_zone"]=pd.cut(f["dc_pct"],bins=[-np.inf,0,0.25,0.5,0.75,1.0,np.inf],labels=False).astype(float)
+        # Donchian türevleri
+        f["dc_width_change5"]=dc_width.pct_change(5)
+        f["dc_width_change10"]=dc_width.pct_change(10)
+        f["dc_basis_slope5"]=dc_basis.diff(5)/(dc_basis.abs()+E)
+        f["dc_upper_slope5"]=dc_upper.diff(5)/(dc_upper.abs()+E)
+        f["dc_lower_slope5"]=dc_lower.diff(5)/(dc_lower.abs()+E)
+        f["dc_pct_ma5"]=f["dc_pct"].rolling(5,min_periods=1).mean()
+        f["dc_pct_ma10"]=f["dc_pct"].rolling(10,min_periods=1).mean()
+        f["dc_breakout_up"]=((cl>dc_upper.shift(1))&(cl.shift(1)<=dc_upper.shift(2))).astype(float)
+        f["dc_breakout_down"]=((cl<dc_lower.shift(1))&(cl.shift(1)>=dc_lower.shift(2))).astype(float)
+        f["dc_width_rank20"]=dc_width.rolling(20,min_periods=1).apply(lambda x: (x[-1] < x[:-1]).mean(), raw=True)
+        # Gecikmeli özellikler
+        for col in ["sqz_val","sqz_val_pos","sqz_on","dc_pct","dc_above_basis","sqz_val_zscore"]:
             if col in f.columns:
                 for lag in [1,2,3]:
                     f[f"{col}_lag{lag}"]=f[col].shift(lag)
         return f.replace([np.inf,-np.inf],np.nan).clip(-1e6,1e6)
+
     def _labels(self,df):
         cl=df["Close"]
-        atr=atr_sma(df,14)
         H=self.horizon
         buy_lbl=pd.Series(0.0,index=df.index)
         sell_lbl=pd.Series(0.0,index=df.index)
         ca=cl.values
-        aa=atr.values
         for i in range(len(ca)-H):
             e=ca[i]
             w=ca[i+1:i+H+1]
-            thr=float(np.clip(aa[i]/(e+E),0.003,0.025))
+            thr=0.008
             mfe=(np.max(w)-e)/(e+E)
             mae=(e-np.min(w))/(e+E)
             if mfe>=thr and mfe>=mae*1.5:buy_lbl.iloc[i]=1.0
@@ -240,16 +154,17 @@ class MLEngine:
         labels[buy_lbl==1.0]=1.0
         labels[sell_lbl==1.0]=-1.0
         return labels
+
     def fit_predict(self,df):
         feat=self._features(df).replace([np.inf,-np.inf],np.nan).clip(-1e9,1e9).dropna()
         y=self._labels(df).loc[feat.index].dropna()
         X=feat.loc[y.index]
         n=len(X)
         if n<100:return None,{"error":"Yetersiz veri"}
-        CONF=0.50
-        gb=HistGradientBoostingClassifier(max_iter=400,max_depth=5,learning_rate=0.04,min_samples_leaf=10,l2_regularization=0.2,class_weight="balanced",random_state=42)
-        rf=RandomForestClassifier(n_estimators=300,max_depth=8,min_samples_leaf=8,class_weight="balanced",max_features="sqrt",random_state=42,n_jobs=-1)
-        et=ExtraTreesClassifier(n_estimators=300,max_depth=8,min_samples_leaf=8,class_weight="balanced",max_features="sqrt",random_state=42,n_jobs=-1)
+        CONF=0.55
+        gb=HistGradientBoostingClassifier(max_iter=500,max_depth=6,learning_rate=0.03,min_samples_leaf=5,l2_regularization=0.1,class_weight="balanced",random_state=42)
+        rf=RandomForestClassifier(n_estimators=400,max_depth=7,min_samples_leaf=5,class_weight="balanced",max_features="sqrt",random_state=42,n_jobs=-1)
+        et=ExtraTreesClassifier(n_estimators=400,max_depth=7,min_samples_leaf=5,class_weight="balanced",max_features="sqrt",random_state=42,n_jobs=-1)
         X_arr=X.values
         y_arr=y.values
         med=np.nanmedian(X_arr,axis=0)
@@ -258,6 +173,7 @@ class MLEngine:
             if m.any():X_arr[m,j]=med[j]
         fold_accs=[]
         fold_f1s=[]
+        weights={"gb":[],"rf":[],"et":[]}
         for tr_i,te_i in TimeSeriesSplit(n_splits=5,gap=self.horizon).split(X_arr):
             sc=StandardScaler()
             Xtr_s=sc.fit_transform(X_arr[tr_i])
@@ -267,19 +183,33 @@ class MLEngine:
             gb.fit(Xtr_s,ytr)
             rf.fit(Xtr_s,ytr)
             et.fit(Xtr_s,ytr)
-            avg=(gb.predict_proba(Xte_s)+rf.predict_proba(Xte_s)+et.predict_proba(Xte_s))/3
+            # Valide seti üzerinde ağırlık optimizasyonu (basit: her modelin accuracy'sine göre)
+            gb_pred=gb.predict(Xte_s)
+            rf_pred=rf.predict(Xte_s)
+            et_pred=et.predict(Xte_s)
+            gb_acc=(gb_pred==yte).mean()
+            rf_acc=(rf_pred==yte).mean()
+            et_acc=(et_pred==yte).mean()
+            total=gb_acc+rf_acc+et_acc
+            weights["gb"].append(gb_acc/total if total>0 else 1/3)
+            weights["rf"].append(rf_acc/total if total>0 else 1/3)
+            weights["et"].append(et_acc/total if total>0 else 1/3)
+            avg=(gb.predict_proba(Xte_s)*weights["gb"][-1] + rf.predict_proba(Xte_s)*weights["rf"][-1] + et.predict_proba(Xte_s)*weights["et"][-1])
             cls=gb.classes_
             preds=np.array([cls[np.argmax(r)] if np.max(r)>=CONF else 0 for r in avg])
             fold_accs.append(float((preds==yte).mean()*100))
             fold_f1s.append(float(f1_score(yte,preds,average="weighted",zero_division=0)*100))
         acc=float(np.mean(fold_accs))
         f1_avg=float(np.mean(fold_f1s))
+        w_gb=float(np.mean(weights["gb"]))
+        w_rf=float(np.mean(weights["rf"]))
+        w_et=float(np.mean(weights["et"]))
         self.scaler.fit(X_arr)
         Xs=self.scaler.transform(X_arr)
         gb.fit(Xs,y_arr)
         rf.fit(Xs,y_arr)
         et.fit(Xs,y_arr)
-        avg_pa=(gb.predict_proba(Xs)+rf.predict_proba(Xs)+et.predict_proba(Xs))/3
+        avg_pa=(gb.predict_proba(Xs)*w_gb + rf.predict_proba(Xs)*w_rf + et.predict_proba(Xs)*w_et)
         raw=np.array([cls[np.argmax(r)] if np.max(r)>=CONF else 0 for r in avg_pa])
         confirmed=np.zeros_like(raw)
         for i in range(1,len(raw)):
@@ -290,10 +220,12 @@ class MLEngine:
         imp=(rf.feature_importances_+et.feature_importances_)/2
         self.model=(gb,rf,et)
         return pred_s,{"accuracy":acc,"f1_score":f1_avg,"train_size":int(n*0.8),"test_size":int(n*0.2),"top_features":sorted(zip(X.columns,imp),key=lambda x:-x[1])[:6],"split_date":(X.index[int(n*0.8)] if int(n*0.8)<n else None)}
+
 class Backtester:
     def __init__(self,initial_capital=INITIAL_CAPITAL,commission=0.0002):
         self.initial_capital=initial_capital
         self.commission=commission
+
     def run(self,df,signals,name="Strateji",min_hold_hours=0,min_profit_pct=0.0):
         signals=signals.reindex(df.index).fillna(0)
         cap=float(self.initial_capital)
@@ -348,14 +280,16 @@ class Backtester:
             tp=float(td["pnl"].sum())
         else:wr=ar=bt=wt=tp=0.0
         return {"name":name,"total_return":(float(eq.iloc[-1])-self.initial_capital)/self.initial_capital*100,"bh_return":(float(df["Close"].iloc[-1])-float(df["Close"].iloc[0]))/float(df["Close"].iloc[0])*100,"max_drawdown":float(dd.min()),"sharpe":sharpe,"num_trades":len(trades),"win_rate":wr,"avg_return":ar,"best_trade":bt,"worst_trade":wt,"total_pnl":tp,"total_commission":tc,"equity_curve":eq,"trades":trades}
+
 def _tbl_style(tbl):
     tbl.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
     tbl.verticalHeader().setVisible(False)
     tbl.setAlternatingRowColors(True)
     tbl.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
     tbl.setStyleSheet("QTableWidget{gridline-color:#2a2a4a;}QHeaderView::section{background:#ff9800;padding:6px;}")
+
 class BacktestDialog(QtWidgets.QDialog):
-    def __init__(self,at_r,ml_r,ml_info,df,parent=None):
+    def __init__(self,ml_r,ml_info,df,parent=None):
         super().__init__(parent)
         self.setWindowTitle("Backtest & ML Analiz Sonuçları")
         self.resize(1050,680)
@@ -364,11 +298,12 @@ class BacktestDialog(QtWidgets.QDialog):
         tabs=QtWidgets.QTabWidget()
         tabs.setStyleSheet("QTabBar::tab{padding:8px 18px;}QTabBar::tab:selected{color:#ff9800;font-weight:bold;}")
         main.addWidget(tabs)
-        for title,fn,args in [("Performans Karşılaştırma",self._metrics,(at_r,ml_r,ml_info)),("Equity Eğrisi",self._equity,(at_r,ml_r,df)),("İşlem Geçmişi (ML)",self._trades,(ml_r,))]:
+        for title,fn,args in [("Performans",self._metrics,(ml_r,ml_info)),("Equity Eğrisi",self._equity,(ml_r,df)),("İşlem Geçmişi (ML)",self._trades,(ml_r,))]:
             w=QtWidgets.QWidget()
             tabs.addTab(w,title)
             fn(w,*args)
-    def _metrics(self,w,at_r,ml_r,info):
+
+    def _metrics(self,w,ml_r,info):
         vl=QtWidgets.QVBoxLayout(w)
         vl.setSpacing(8)
         if info and "accuracy" in info:
@@ -379,7 +314,7 @@ class BacktestDialog(QtWidgets.QDialog):
             vl.addWidget(lbl)
         ml_only={"f1_score","accuracy"}
         rows=[("Toplam Getiri (%)","total_return",True),("Al & Tut Getiri (%)","bh_return",True),("İşlem Sayısı","num_trades",None),("Kazanma Oranı (%)","win_rate",True),("Maks Drawdown (%)","max_drawdown",False),("Sharpe","sharpe",True),("Ort İşlem Getiri (%)","avg_return",True),("En İyi İşlem (%)","best_trade",True),("En Kötü İşlem (%)","worst_trade",False),("Toplam K/Z","total_pnl",True),("Toplam Komisyon (₺)","total_commission",None),("OOS Doğruluk (%)","accuracy",True),("F1 (%)","f1_score",True)]
-        cols=["Metrik","AlphaTrend"]+(["ML"] if ml_r else [])
+        cols=["Metrik","ML"]
         tbl=QtWidgets.QTableWidget(len(rows),len(cols))
         tbl.setHorizontalHeaderLabels(cols)
         _tbl_style(tbl)
@@ -392,19 +327,10 @@ class BacktestDialog(QtWidgets.QDialog):
             tbl.setItem(r,0,QtWidgets.QTableWidgetItem(label))
             mo=key in ml_only
             if mo:
-                d=QtWidgets.QTableWidgetItem("—")
-                d.setForeground(QtGui.QColor("#666"))
-                tbl.setItem(r,1,d)
-            else:tbl.setItem(r,1,mi(at_r.get(key,0) if at_r else 0,hb))
-            if ml_r:
-                mv=float(info.get(key,0)) if mo and info else ml_r.get(key,0)
-                ac=0 if mo else (at_r.get(key,0) if at_r else 0)
-                it=mi(mv,hb)
-                if hb is True and mv>ac:
-                    ft=it.font()
-                    ft.setBold(True)
-                    it.setFont(ft)
-                tbl.setItem(r,2,it)
+                mv=float(info.get(key,0)) if info else 0
+            else:
+                mv=ml_r.get(key,0) if ml_r else 0
+            tbl.setItem(r,1,mi(mv,hb))
         vl.addWidget(tbl)
         if info and info.get("top_features"):
             l2=QtWidgets.QLabel("En Önemli Özellikler:")
@@ -413,7 +339,8 @@ class BacktestDialog(QtWidgets.QDialog):
             vl.addWidget(QtWidgets.QLabel("  │  ".join(f"{k}: {v:.3f}" for k,v in info["top_features"])))
         if "error" in info:
             vl.addWidget(QtWidgets.QLabel(info["error"]))
-    def _equity(self,w,at_r,ml_r,df):
+
+    def _equity(self,w,ml_r,df):
         vl=QtWidgets.QVBoxLayout(w)
         vl.setContentsMargins(0,0,0,0)
         fig=Figure(figsize=(10,4.5),dpi=100)
@@ -422,8 +349,6 @@ class BacktestDialog(QtWidgets.QDialog):
         ax.set_facecolor("white")
         bh=df["Close"]/float(df["Close"].iloc[0])*INITIAL_CAPITAL
         ax.plot(bh.index,bh.values,color="#888",lw=1.2,ls="--",label="Al & Tut",alpha=0.7)
-        if at_r:
-            ax.plot(at_r["equity_curve"].index,at_r["equity_curve"].values,color="#2196F3",lw=1.8,label="AlphaTrend")
         if ml_r:
             ax.plot(ml_r["equity_curve"].index,ml_r["equity_curve"].values,color="#FF9800",lw=1.8,label="ML")
         ax.axhline(INITIAL_CAPITAL,color="#555",lw=0.7,ls=":")
@@ -436,6 +361,7 @@ class BacktestDialog(QtWidgets.QDialog):
         ax.grid(True,alpha=0.25,color="#aaa")
         fig.tight_layout(pad=1.5)
         vl.addWidget(FigureCanvas(fig))
+
     def _trades(self,w,result):
         vl=QtWidgets.QVBoxLayout(w)
         if not result or not result.get("trades"):
@@ -466,6 +392,7 @@ class BacktestDialog(QtWidgets.QDialog):
         s=QtWidgets.QLabel(f"{len(trades)} işlem  │  {wins} kazanan  │  {len(trades)-wins} kaybeden  │  Komisyon: ₺{tc:.2f}")
         s.setStyleSheet("padding:6px;color:#ff9800;font-weight:bold;")
         vl.addWidget(s)
+
 class Canvas(FigureCanvas):
     _L=0.04
     _R=0.95
@@ -476,21 +403,11 @@ class Canvas(FigureCanvas):
         super().__init__(fig)
         if parent:self.setParent(parent)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,QtWidgets.QSizePolicy.Policy.Expanding)
+
     def resizeEvent(self,ev):
-        w=ev.size().width()
-        h=ev.size().height()
-        dpi=float(getattr(self.figure,"dpi",100.0))
-        if w>0 and h>0 and dpi>0:
-            try:self.figure.set_size_inches(w/dpi,h/dpi,forward=True)
-            except TypeError:self.figure.set_size_inches(w/dpi,h/dpi)
-            ax=list(self.figure.axes)
-            if ax:
-                if len(ax)==1:ax[0].set_position([self._L,self._B,self._R-self._L,self._T-self._B])
-                else:
-                    ax[0].set_position([self._L,self._B+self._VH+0.01,self._R-self._L,max((self._T-self._B)-self._VH-0.01,0.05)])
-                    ax[-1].set_position([self._L,self._B,self._R-self._L,self._VH])
         super().resizeEvent(ev)
         self.draw_idle()
+
 class Worker(QtCore.QThread):
     ready=QtCore.pyqtSignal(object,float)
     error=QtCore.pyqtSignal(str)
@@ -499,6 +416,7 @@ class Worker(QtCore.QThread):
         self.sym=sym
         self.tf=tf
         self.currency=currency
+
     def _fetch_usdtry(self):
         try:
             fx=yf.download("USDTRY=X",period="5d",interval="1d",progress=False,threads=False,auto_adjust=False)
@@ -507,14 +425,17 @@ class Worker(QtCore.QThread):
                 return float(fx["Close"].dropna().iloc[-1])
         except Exception:pass
         return 1.0
+
     @staticmethod
     def _fix(df):
         if isinstance(df.columns,pd.MultiIndex):df.columns=df.columns.get_level_values(0)
         df.index=pd.to_datetime(df.index)
         return df
+
     @staticmethod
     def _resample(df,rule):
         return df.resample(rule).agg({"Open":"first","High":"max","Low":"min","Close":"last","Volume":"sum"}).dropna()
+
     def run(self):
         try:
             kw={"auto_adjust":False,"progress":False,"threads":False}
@@ -528,6 +449,7 @@ class Worker(QtCore.QThread):
             elif self.tf=="1W":raw=self._resample(raw,"W")
             self.ready.emit(raw,fx)
         except Exception as e:self.error.emit(str(e))
+
 class MLWorker(QtCore.QThread):
     done=QtCore.pyqtSignal(object,object,object,object)
     error=QtCore.pyqtSignal(str)
@@ -535,16 +457,13 @@ class MLWorker(QtCore.QThread):
         super().__init__()
         self._df=df.copy()
         self._tf=tf
+
     def run(self):
         try:
             df=self._df
-            at_sig=pd.Series(0.0,index=df.index)
-            at_sig[df["AT_BUY"].notna()]=1.0
-            at_sig[df["AT_SELL"].notna()]=-1.0
             pred,info=MLEngine(horizon=5,threshold=0.005).fit_predict(df)
             bt=Backtester(initial_capital=INITIAL_CAPITAL,commission=0.0002)
-            at_r=bt.run(df,at_sig,"AlphaTrend")
-            ml_r=bt.run(df,pred.reindex(df.index).fillna(0) if pred is not None else at_sig,"ML",min_hold_hours=4,min_profit_pct=0.02)
+            ml_r=bt.run(df,pred.reindex(df.index).fillna(0) if pred is not None else pd.Series(0,index=df.index),"ML",min_hold_hours=4,min_profit_pct=0.02)
             if pred is not None:
                 p=pred.reindex(df.index,fill_value=0)
                 rb=pd.Series(np.where((p==1)&(p.shift(1)!=1),df["Close"]*0.986,np.nan),index=df.index)
@@ -553,11 +472,12 @@ class MLWorker(QtCore.QThread):
             else:
                 df["ML_BUY"]=np.nan
                 df["ML_SELL"]=np.nan
-            self.done.emit(df,pred,info,(at_r,ml_r))
+            self.done.emit(df,pred,info,ml_r)
         except Exception as e:
             print(f"\n[ML HATA] {e}",file=sys.stderr)
             print(traceback.format_exc(),file=sys.stderr)
             self.error.emit(str(e))
+
 class DisclaimerDialog(QtWidgets.QDialog):
     def __init__(self,parent=None):
         super().__init__(parent)
@@ -580,13 +500,14 @@ class DisclaimerDialog(QtWidgets.QDialog):
         layout.addLayout(btn_row)
         self.adjustSize()
         self.setFixedSize(self.sizeHint())
+
 class App(QtWidgets.QMainWindow):
     _STEP_VALUES=[1,4,8,16]
+    MAX_BARS=250
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Pusula Finans V1.3")
         self.resize(1000,680)
-        self._at_result=None
         self._ml_result=None
         self._df=None
         self._ml_worker=None
@@ -672,6 +593,7 @@ class App(QtWidgets.QMainWindow):
         self.toolbar=None
         self.worker=None
         self.axes=None
+
     def share_graph(self):
         try:
             script_dir=os.path.dirname(os.path.abspath(__file__))
@@ -679,39 +601,47 @@ class App(QtWidgets.QMainWindow):
             subprocess.Popen([sys.executable,grafik_paylas_path])
         except Exception as e:
             QtWidgets.QMessageBox.warning(self,"Hata",f"grafiği_paylaş.py çalıştırılamadı: {e}")
+
     def _cycle_step(self):
         self._step_index=(self._step_index+1)%len(self._STEP_VALUES)
         val=self._STEP_VALUES[self._step_index]
         self.btn_step.setText(str(val))
         self.btn_prev.setToolTip(f"{val} mum geri")
         self.btn_next.setToolTip(f"{val} mum ileri")
+
     def _current_step_size(self):
         return self._STEP_VALUES[self._step_index]
+
     def _current_view_df(self):
         if self._df is None:return None
         n=len(self._df)
-        end=max(n-self._view_offset,1)
-        return self._df.iloc[:end]
+        end=n-self._view_offset
+        start=max(0,end-self.MAX_BARS)
+        return self._df.iloc[start:end]
+
     def _capture_view_limits(self):
         if not self.axes:return None
         ax_list=self.axes if isinstance(self.axes,(list,tuple)) else [self.axes]
         try:
             return [(a.get_xlim(),a.get_ylim()) for a in ax_list]
         except Exception:return None
+
     def _step_left(self):
         if self._df is None:return
-        max_offset=len(self._df)-1
+        max_offset=max(0,len(self._df)-self.MAX_BARS)
         step=self._current_step_size()
         if self._view_offset>=max_offset:return
         limits=self._capture_view_limits()
         self._view_offset=min(self._view_offset+step,max_offset)
         self._render(self._current_view_df(),view_limits=limits)
+
     def _step_right(self):
         if self._df is None or self._view_offset<=0:return
         step=self._current_step_size()
         limits=self._capture_view_limits()
         self._view_offset=max(self._view_offset-step,0)
         self._render(self._current_view_df(),view_limits=limits)
+
     @staticmethod
     def _to_heiken_ashi(df):
         ha=df.copy()
@@ -727,13 +657,16 @@ class App(QtWidgets.QMainWindow):
         ha["High"]=pd.concat([df["High"],ha_open,ha_close],axis=1).max(axis=1)
         ha["Low"]=pd.concat([df["Low"],ha_open,ha_close],axis=1).min(axis=1)
         return ha
+
     def _on_chart_type_changed(self):
         if self._df is not None:self._render(self._current_view_df())
+
     def _start_cooldown(self):
         self._cooldown_remaining=COOLDOWN_SECONDS
         self.btn.setEnabled(False)
         self.cooldown_lbl.setText(f"⏳ Yükle: {self._cooldown_remaining} sn")
         self._cooldown_timer.start()
+
     def _tick_cooldown(self):
         self._cooldown_remaining-=1
         if self._cooldown_remaining<=0:
@@ -742,9 +675,11 @@ class App(QtWidgets.QMainWindow):
             self.btn.setEnabled(True)
             self.cooldown_lbl.setText("")
         else:self.cooldown_lbl.setText(f"⏳ Yükle: {self._cooldown_remaining} sn")
+
     def _sym(self):
         s=self.sym.text().strip().upper()
         return s if s.endswith(".IS") else s+".IS"
+
     @staticmethod
     def _update_sqz_colors(df):
         vals=df["SQZ_VAL"].values
@@ -762,6 +697,7 @@ class App(QtWidgets.QMainWindow):
                 else:bcolors.append("gray")
             if not np.isnan(v) and not np.isinf(v):prev_val=v
         return bcolors
+
     def load(self):
         s=self._sym()
         if not s:
@@ -777,9 +713,11 @@ class App(QtWidgets.QMainWindow):
         self.worker.ready.connect(self.on_data)
         self.worker.error.connect(self.on_err)
         self.worker.start()
+
     def on_err(self,m):
         print(f"[VERİ HATA] {m}",file=sys.stderr)
         self._start_cooldown()
+
     def on_data(self,df,fx_rate):
         if not {"Open","High","Low","Close"}.issubset(df.columns):
             QtWidgets.QMessageBox.critical(self,"Hata",f"Kolonlar eksik: {list(df.columns)}")
@@ -790,12 +728,12 @@ class App(QtWidgets.QMainWindow):
         if self.ccy.currentData()=="USD" and fx_rate>1.0:
             for col in ["Open","High","Low","Close"]:
                 df[col]=df[col]/fx_rate
-        df=fib_bb(squeeze_momentum(macd_rsi(alpha_trend(df))))
+        df=donchian(squeeze_momentum(df))
         df["ML_BUY"]=np.nan
         df["ML_SELL"]=np.nan
         self._df=df
         self._view_offset=0
-        self._render(df)
+        self._render(self._current_view_df())
         self._start_cooldown()
         self.progress.setText("ML eğitiliyor...")
         if self._ml_worker and self._ml_worker.isRunning():self._ml_worker.terminate()
@@ -803,22 +741,25 @@ class App(QtWidgets.QMainWindow):
         self._ml_worker.done.connect(self._on_ml_done)
         self._ml_worker.error.connect(self._on_ml_err)
         self._ml_worker.start()
+
     def _on_ml_err(self,m):
         self.progress.setText(f"ML Hata: {m}")
         print(f"[ML HATA] {m}",file=sys.stderr)
-    def _on_ml_done(self,df,pred,info,results):
-        self._at_result,self._ml_result=results
+
+    def _on_ml_done(self,df,pred,info,ml_r):
+        self._ml_result=ml_r
         self._ml_info=info
         self._df=df
         a=info.get("accuracy",0)
-        ta=(self._at_result or {}).get("total_return",0)
         tm=(self._ml_result or {}).get("total_return",0)
-        self.progress.setText(f"ML Doğruluk: {a:.1f}%  │  AT: {ta:+.1f}%  │  ML: {tm:+.1f}%")
+        self.progress.setText(f"ML Doğruluk: {a:.1f}%  │  ML: {tm:+.1f}%")
         self.bt_btn.setEnabled(True)
         self._render(self._current_view_df())
+
     def show_backtest(self):
         if self._df is None:return
-        BacktestDialog(self._at_result or {},self._ml_result,self._ml_info or {},self._df,parent=self).exec()
+        BacktestDialog(self._ml_result,self._ml_info,self._df,parent=self).exec()
+
     def _clear(self):
         for w in (self.toolbar,self.canvas):
             if w:
@@ -828,17 +769,18 @@ class App(QtWidgets.QMainWindow):
         self.toolbar=None
         self.canvas=None
         self.axes=None
+
     def _render(self,df,view_limits=None):
         self._clear()
         chart_t=self.chart_type.currentData()
         plot_df=self._to_heiken_ashi(df) if chart_t=="heikinashi" else df
         sqz_colors=self._update_sqz_colors(plot_df)
-        apds=[mpf.make_addplot(plot_df["AlphaTrend"],type="line",width=1.4,panel=0,secondary_y=False,color="#00897B"),mpf.make_addplot(plot_df["AT2"],type="line",width=1.2,panel=0,linestyle="dashdot",secondary_y=False,color="#607D8B"),mpf.make_addplot(plot_df["FBB_BASIS"],type="line",panel=0,width=1.8,color="#FF00FF",secondary_y=False),mpf.make_addplot(plot_df["FBB_U10"],type="line",panel=0,width=1.5,color="#F23645",secondary_y=False),mpf.make_addplot(plot_df["FBB_L10"],type="line",panel=0,width=1.5,color="#089981",secondary_y=False),mpf.make_addplot(plot_df["FBB_U0764"],type="line",panel=0,width=0.7,color="#787B86",linestyle="solid",secondary_y=False),mpf.make_addplot(plot_df["FBB_L0764"],type="line",panel=0,width=0.7,color="#787B86",linestyle="solid",secondary_y=False),mpf.make_addplot(plot_df["FBB_U0618"],type="line",panel=0,width=0.7,color="#787B86",linestyle="solid",secondary_y=False),mpf.make_addplot(plot_df["FBB_L0618"],type="line",panel=0,width=0.7,color="#787B86",linestyle="solid",secondary_y=False),mpf.make_addplot(plot_df["FBB_U05"],type="line",panel=0,width=0.7,color="#787B86",linestyle="solid",secondary_y=False),mpf.make_addplot(plot_df["FBB_L05"],type="line",panel=0,width=0.7,color="#787B86",linestyle="solid",secondary_y=False),mpf.make_addplot(plot_df["FBB_U0382"],type="line",panel=0,width=0.7,color="#787B86",linestyle="solid",secondary_y=False),mpf.make_addplot(plot_df["FBB_L0382"],type="line",panel=0,width=0.7,color="#787B86",linestyle="solid",secondary_y=False),mpf.make_addplot(plot_df["FBB_U0236"],type="line",panel=0,width=0.7,color="#787B86",linestyle="solid",secondary_y=False),mpf.make_addplot(plot_df["FBB_L0236"],type="line",panel=0,width=0.7,color="#787B86",linestyle="solid",secondary_y=False),mpf.make_addplot(plot_df["SQZ_VAL"],type="bar",panel=1,width=0.7,color=sqz_colors,secondary_y=False)]
-        for col,mk,sz,cl in [("AT_BUY","^",60,"#00e676"),("AT_SELL","v",60,"#ff1744"),("ML_BUY","^",90,"#2979ff"),("ML_SELL","v",90,"#ff6d00")]:
+        apds=[mpf.make_addplot(plot_df["DC_BASIS"],type="line",panel=0,width=0.8,color="#FF6D00",secondary_y=False),mpf.make_addplot(plot_df["DC_UPPER"],type="line",panel=0,width=0.8,color="#2962FF",secondary_y=False),mpf.make_addplot(plot_df["DC_LOWER"],type="line",panel=0,width=0.8,color="#2962FF",secondary_y=False),mpf.make_addplot(plot_df["SQZ_VAL"],type="bar",panel=1,width=0.7,color=sqz_colors,secondary_y=False)]
+        for col,mk,sz,cl in [("ML_BUY","^",90,"#2979ff"),("ML_SELL","v",90,"#ff6d00")]:
             if plot_df[col].notna().any():apds.append(mpf.make_addplot(plot_df[col],type="scatter",markersize=sz,marker=mk,panel=0,color=cl,secondary_y=False))
         marketcolors=mpf.make_marketcolors(up="green",down="red",edge="inherit",wick="inherit",volume="in")
         st=mpf.make_mpf_style(base_mpf_style="classic",marketcolors=marketcolors,rc={"font.family":"DejaVu Sans","font.weight":"normal","axes.titleweight":"normal","axes.labelweight":"normal","figure.titleweight":"normal"})
-        fig,axes=mpf.plot(plot_df,type="candle",volume=False,style=st,addplot=apds,returnfig=True,figsize=(12,6),xrotation=0,tight_layout=False,scale_padding=0.05)
+        fig,axes=mpf.plot(plot_df,type="candle",volume=False,style=st,addplot=apds,returnfig=True,figsize=(10,5),xrotation=0,tight_layout=False,scale_padding=0.05)
         if isinstance(axes,(list,tuple)):ax_list=list(axes)
         else:ax_list=[axes]
         main_ax=ax_list[0]
@@ -863,11 +805,15 @@ class App(QtWidgets.QMainWindow):
             panel_ax.tick_params(axis="y",which="both",left=True,labelleft=True,right=False,labelright=False,pad=3)
             panel_ax.tick_params(axis="x",which="both",bottom=True,labelbottom=True)
             panel_ax.set_ylabel("")
-        lo=pd.to_numeric(plot_df["FBB_L10"],errors="coerce").to_numpy()
-        hi=pd.to_numeric(plot_df["FBB_U10"],errors="coerce").to_numpy()
-        valid=np.isfinite(lo)&np.isfinite(hi)
+        for ax in [main_ax,panel_ax]:
+            if ax is not None:
+                for spine in ax.spines.values():
+                    spine.set_linewidth(0.5)
+        dc_lo=pd.to_numeric(plot_df["DC_LOWER"],errors="coerce").to_numpy()
+        dc_hi=pd.to_numeric(plot_df["DC_UPPER"],errors="coerce").to_numpy()
+        valid=np.isfinite(dc_lo)&np.isfinite(dc_hi)
         if valid.any():
-            main_ax.fill_between(np.arange(len(plot_df)),lo,hi,where=valid,alpha=0.035,color="#2196F3",zorder=0)
+            main_ax.fill_between(np.arange(len(plot_df)),dc_lo,dc_hi,where=valid,alpha=0.05,color="#2962FF",zorder=0)
         if view_limits:
             if len(view_limits)>0:
                 try:
@@ -885,7 +831,8 @@ class App(QtWidgets.QMainWindow):
         self.pl.insertWidget(0,self.toolbar)
         self.axes=[main_ax]+([panel_ax] if panel_ax is not None else [])
         self.canvas.mpl_connect("scroll_event",self._scroll)
-        self.canvas.draw()
+        self.canvas.draw_idle()
+
     def _scroll(self,ev):
         if ev.inaxes is None or ev.xdata is None:return
         try:
@@ -898,6 +845,7 @@ class App(QtWidgets.QMainWindow):
                 except Exception:pass
             if self.canvas:self.canvas.draw_idle()
         except Exception:pass
+
 if __name__=="__main__":
     app=QtWidgets.QApplication(sys.argv)
     app.setFont(QtGui.QFont("DejaVu Sans",9))

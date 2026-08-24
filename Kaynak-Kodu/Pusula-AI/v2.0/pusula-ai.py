@@ -1,14 +1,15 @@
-# ==============================
-# pusula-ai.py (Sohbet) - eğitim.py ile %100 uyumlu
-# ==============================
 import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import sentencepiece as spm
 import math
+import time
+import re
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SYSTEM_PROMPT = ""
+
 
 class RMSNorm(nn.Module):
     def __init__(self, dim, eps=1e-6):
@@ -66,29 +67,31 @@ class MultiHeadAttention(nn.Module):
         self.head_dim = embed_dim // num_heads
         self.max_seq_len = max_seq_len
 
-        self.q_proj = nn.Linear(embed_dim, embed_dim, bias=False)
-        self.k_proj = nn.Linear(embed_dim, embed_dim, bias=False)
-        self.v_proj = nn.Linear(embed_dim, embed_dim, bias=False)
+        self.qkv_proj = nn.Linear(embed_dim, embed_dim * 3, bias=False)
         self.o_proj = nn.Linear(embed_dim, embed_dim, bias=False)
         self.rotary = RotaryEmbedding(self.head_dim, max_seq_len)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, mask=None):
+    def forward(self, x):
         B, T, C = x.shape
-        q = self.q_proj(x).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
-        k = self.k_proj(x).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
-        v = self.v_proj(x).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        qkv = self.qkv_proj(x)
+        q, k, v = qkv.split(self.embed_dim, dim=-1)
+        q = q.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        k = k.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        v = v.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
 
         cos, sin = self.rotary(q, T)
         q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
-        attn = (q @ k.transpose(-2, -1)) / math.sqrt(self.head_dim)
-        if mask is not None:
-            attn = attn.masked_fill(mask == 0, float('-inf'))
-        attn = F.softmax(attn, dim=-1)
-        attn = self.dropout(attn)
+        attn = F.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask=None,
+            dropout_p=self.dropout.p if self.training else 0.0,
+            is_causal=True,
+            scale=1.0 / math.sqrt(self.head_dim)
+        )
 
-        out = (attn @ v).transpose(1, 2).contiguous().view(B, T, C)
+        out = attn.transpose(1, 2).contiguous().view(B, T, C)
         return self.o_proj(out)
 
 
@@ -105,47 +108,83 @@ class SwiGLU(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, embed_dim, num_heads, max_seq_len, dropout=0.0):
+    def __init__(self, embed_dim, num_heads, max_seq_len, dropout=0.0, use_checkpoint=True):
         super().__init__()
+        self.use_checkpoint = use_checkpoint
         self.attn = MultiHeadAttention(embed_dim, num_heads, max_seq_len, dropout)
-        self.ffn = SwiGLU(embed_dim, embed_dim * 4, dropout)
+        self.ffn = SwiGLU(embed_dim, embed_dim * 2, dropout)
         self.norm1 = RMSNorm(embed_dim)
         self.norm2 = RMSNorm(embed_dim)
 
-    def forward(self, x, mask=None):
-        x = x + self.attn(self.norm1(x), mask)
-        x = x + self.ffn(self.norm2(x))
+    def _attn_forward(self, x):
+        return self.attn(self.norm1(x))
+
+    def _ffn_forward(self, x):
+        return self.ffn(self.norm2(x))
+
+    def forward(self, x):
+        if self.use_checkpoint and self.training and torch.is_grad_enabled():
+            x = x + torch.utils.checkpoint.checkpoint(self._attn_forward, x, use_reentrant=False)
+            x = x + torch.utils.checkpoint.checkpoint(self._ffn_forward, x, use_reentrant=False)
+        else:
+            x = x + self._attn_forward(x)
+            x = x + self._ffn_forward(x)
         return x
 
 
 class MiniLLM(nn.Module):
-    def __init__(self, vocab_size, embed_dim, num_heads, num_layers, max_seq_len, pad_idx, dropout=0.0):
+    def __init__(self, vocab_size, embed_dim, num_heads, num_layers, max_seq_len, pad_idx,
+                 dropout=0.0, checkpoint_every=1):
         super().__init__()
         self.token_embed = nn.Embedding(vocab_size, embed_dim, padding_idx=pad_idx)
         self.pos_embed = nn.Embedding(max_seq_len, embed_dim)
         self.layers = nn.ModuleList([
-            TransformerBlock(embed_dim, num_heads, max_seq_len, dropout)
-            for _ in range(num_layers)
+            TransformerBlock(
+                embed_dim, num_heads, max_seq_len, dropout,
+                use_checkpoint=(checkpoint_every > 0 and (i % checkpoint_every == 0))
+            )
+            for i in range(num_layers)
         ])
         self.norm = RMSNorm(embed_dim)
         self.lm_head = nn.Linear(embed_dim, vocab_size, bias=False)
-        self.token_embed.weight = self.lm_head.weight  # weight tying
+        self.token_embed.weight = self.lm_head.weight
         self.max_seq_len = max_seq_len
         self.pad_idx = pad_idx
 
-    def forward(self, input_ids, mask=None):
+    def forward(self, input_ids):
         B, T = input_ids.shape
         x = self.token_embed(input_ids)
         pos = torch.arange(T, device=input_ids.device).unsqueeze(0).expand(B, T)
         x = x + self.pos_embed(pos)
 
         for layer in self.layers:
-            x = layer(x, mask)
+            x = layer(x)
         x = self.norm(x)
         return self.lm_head(x)
 
 
-def generate(model, tokenizer, prompt, max_new_tokens=200, temperature=0.7, top_k=40, repetition_penalty=1.2):
+def clean_response(response):
+    for etiket in ["Asistan:", "Cevap:", "Kullanıcı:", "İnsan:", "Gpt:", "Sistem:", "Soru:"]:
+        if response.startswith(etiket):
+            response = response[len(etiket):].strip()
+            break
+
+    etiketler = ["İnsan:", "Kullanıcı:", "Asistan:", "Sistem:", "Gpt:", "Cevap:", "Soru:"]
+    en_erken_index = None
+    for etiket in etiketler:
+        index = response.find(etiket)
+        if index != -1:
+            if en_erken_index is None or index < en_erken_index:
+                en_erken_index = index
+
+    if en_erken_index is not None and en_erken_index > 0:
+        response = response[:en_erken_index].strip()
+
+    response = re.sub(r'\s+', ' ', response).strip()
+    return response
+
+
+def generate(model, tokenizer, prompt, max_new_tokens=30, temperature=0.1, top_k=3, repetition_penalty=2.0):
     model.eval()
     device = next(model.parameters()).device
     eos_idx = tokenizer.eos_id()
@@ -160,14 +199,10 @@ def generate(model, tokenizer, prompt, max_new_tokens=200, temperature=0.7, top_
         generated_tokens = []
 
         for _ in range(max_new_tokens):
-            seq_len = generated.size(1)
-            mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1).bool()
-            mask = ~mask
-
-            logits = model(generated, mask=mask)
+            logits = model(generated)
             next_logits = logits[0, -1, :] / temperature
 
-            for token in set(generated_tokens[-10:]):
+            for token in set(generated_tokens[-15:]):
                 next_logits[token] /= repetition_penalty
 
             k = min(top_k, next_logits.size(-1))
@@ -190,63 +225,86 @@ def generate(model, tokenizer, prompt, max_new_tokens=200, temperature=0.7, top_
                 break
 
         output_ids = generated[0, len(ids):].tolist()
-        response = tokenizer.decode(output_ids)
-        if len(response.strip()) < 3:
-            response = "Anlamadım, lütfen tekrar sorar mısınız?"
+        response = tokenizer.decode(output_ids).strip()
+        response = clean_response(response)
+
+        if len(response) < 3:
+            response = "Bu konuda yeterli bilgim yok, lütfen başka bir şey sorun."
+
         return response
 
 
 def chat_loop(model, tokenizer):
-    print("\n" + "="*50)
-    print("Pusula AI ile sohbet (Gelişmiş model)")
-    print("Komutlar: /çıkış")
-    print("="*50 + "\n")
+    print("\n" + "="*60)
+    print("Pusula AI ile sohbet (Diyalog Modeli)")
+    print("Komutlar: /çıkış, /temizle")
+    print("="*60 + "\n")
 
     while True:
         try:
-            user_input = input("Misafir: ").strip()
+            user_input = input("👤 Misafir: ").strip()
             if not user_input:
                 continue
+
             if user_input.lower() == '/çıkış':
-                print("Pusula AI: Görüşmek üzere!")
+                print("🤖 Pusula AI: Görüşmek üzere! İyi günler.")
                 break
 
-            prompt = f"Soru: {user_input}\nCevap: "
-            response = generate(model, tokenizer, prompt)
+            if user_input.lower() == '/temizle':
+                os.system('cls' if os.name == 'nt' else 'clear')
+                continue
 
-            if len(response) > 500:
-                response = response[:500] + "..."
-            print(f"Pusula AI: {response}")
+            prompt = f"{SYSTEM_PROMPT}\n\nİnsan: {user_input}\nAsistan: "
+
+            start_time = time.time()
+            response = generate(model, tokenizer, prompt)
+            elapsed = time.time() - start_time
+
+            if len(response) > 600:
+                response = response[:600] + "..."
+
+            print(f"🤖 Pusula AI: {response}")
+            print(f"   (Yanıt süresi: {elapsed:.2f} saniye)\n")
 
         except KeyboardInterrupt:
-            print("\nPusula AI: Program sonlandırılıyor.")
+            print("\n🤖 Pusula AI: Program sonlandırılıyor.")
             break
         except Exception as e:
-            print(f"Hata: {e}")
-            print("Lütfen tekrar deneyin.")
+            print(f"❌ Hata: {e}")
+            print("Lütfen tekrar deneyin.\n")
 
 
 def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Kullanılan cihaz: {device}")
+    print(f"🖥️ Kullanılan cihaz: {device}")
 
     vocab_size = 16000
-    embed_dim = 768
-    num_heads = 12
-    num_layers = 12
-    max_seq_len = 1024
+    embed_dim = 256
+    num_heads = 8
+    num_layers = 8
+    max_seq_len = 256
     pad_idx = 0
     dropout = 0.1
+    checkpoint_every = 1
 
-    model = MiniLLM(vocab_size, embed_dim, num_heads, num_layers, max_seq_len, pad_idx, dropout).to(device)
+    model = MiniLLM(vocab_size, embed_dim, num_heads, num_layers, max_seq_len, pad_idx, dropout, checkpoint_every).to(device)
 
     model_path = os.path.join(BASE_DIR, "pusula_ai_best.pt")
     if not os.path.exists(model_path):
         print("❌ Model dosyası (pusula_ai_best.pt) bulunamadı! Lütfen eğitim.py'yi çalıştırın.")
         return
 
+    state_dict = torch.load(model_path, map_location=device)
+    new_state_dict = {}
+    for key, value in state_dict.items():
+        if key.startswith("_orig_mod."):
+            new_key = key[len("_orig_mod."):]
+        else:
+            new_key = key
+        new_state_dict[new_key] = value
+
     try:
-        model.load_state_dict(torch.load(model_path, map_location=device))
+        model.load_state_dict(new_state_dict, strict=True)
         model.eval()
         print("✅ Model başarıyla yüklendi.")
     except Exception as e:
@@ -255,7 +313,7 @@ def main():
 
     tokenizer_path = os.path.join(BASE_DIR, "tokenizer.model")
     if not os.path.exists(tokenizer_path):
-        print("❌ Tokenizer dosyası bulunamadı!")
+        print("❌ Tokenizer dosyası (tokenizer.model) bulunamadı!")
         return
 
     try:

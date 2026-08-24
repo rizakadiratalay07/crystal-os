@@ -160,8 +160,6 @@ DEBIAN_FRONTEND=noninteractive TMPDIR=/tmp chroot "${CHROOT_DIR}" apt-get instal
     fonts-dejavu \
     fonts-liberation \
     fonts-font-awesome \
-    pulseaudio \
-    pavucontrol-qt \
     gvfs \
     gvfs-backends \
     udisks2 \
@@ -171,6 +169,16 @@ DEBIAN_FRONTEND=noninteractive TMPDIR=/tmp chroot "${CHROOT_DIR}" apt-get instal
     numix-gtk-theme \
     qt5ct \
     qt6ct
+
+DEBIAN_FRONTEND=noninteractive TMPDIR=/tmp chroot "${CHROOT_DIR}" apt-get install -y \
+    -o Dpkg::Options::="--force-confdef" \
+    -o Dpkg::Options::="--force-confold" \
+    --no-install-recommends \
+    pipewire-audio \
+    alsa-utils \
+    alsa-ucm-conf \
+    pavucontrol \
+    pavucontrol-qt
 
 mkdir -p "${CHROOT_DIR}/etc/ssl/certs"
 cp /etc/ssl/certs/ca-certificates.crt "${CHROOT_DIR}/etc/ssl/certs/ca-certificates.crt"
@@ -300,6 +308,7 @@ rm -f "${CHROOT_DIR}/lib/live/config/1160-openssh-server" 2>/dev/null || true
 rm -f "${CHROOT_DIR}/lib/live/config/1170-user-setup"     2>/dev/null || true
 
 chroot "${CHROOT_DIR}" systemctl enable getty@tty1
+chroot "${CHROOT_DIR}" systemctl --global enable wireplumber.service
 
 mkdir -p "${CHROOT_DIR}/root"
 mkdir -p "${CHROOT_DIR}/root/.config/lxqt"
@@ -343,7 +352,6 @@ xhost +local: &
 gio set /root/Desktop/pusula-finans.desktop  metadata::trust true 2>/dev/null || true
 gio set /root/Desktop/crystal-setup.desktop  metadata::trust true 2>/dev/null || true
 gio set /root/Desktop/pusula-ai.desktop  metadata::trust true 2>/dev/null || true
-pulseaudio --start &
 xrdb -merge ~/.Xresources
 setxkbmap tr &
 exec startlxqt
@@ -645,22 +653,22 @@ Categories=System;
 EOF
 chmod +x "${CHROOT_DIR}/root/Desktop/crystal-setup.desktop"
 
-chroot "${CHROOT_DIR}" ln -sf /opt/Pusula-AI/nvidia-llm-setup.sh /usr/local/bin/nvidia-llm-setup
-chmod +x "${CHROOT_DIR}/opt/Pusula-AI/nvidia-llm-setup.sh"
-
 mkdir -p "${CHROOT_DIR}/opt/Pusula-AI"
-rsync -a --exclude='v1.5/' --exclude='v2.0/' --exclude='v2.5/turkish-llm-32b-gguf/' "${SCRIPT_DIR}/Pusula-AI/" "${CHROOT_DIR}/opt/Pusula-AI/"
+rsync -a --exclude='v1.5/' --exclude='v2.5/' "${SCRIPT_DIR}/Pusula-AI/" "${CHROOT_DIR}/opt/Pusula-AI/"
 chown -R root:root "${CHROOT_DIR}/opt/Pusula-AI"
 find "${CHROOT_DIR}/opt/Pusula-AI" -type d -exec chmod 755 {} \;
 find "${CHROOT_DIR}/opt/Pusula-AI" -type f -exec chmod 644 {} \;
+chroot "${CHROOT_DIR}" ln -sf /opt/Pusula-AI/nvidia-llm-setup.sh /usr/local/bin/nvidia-llm-setup
+chmod +x "${CHROOT_DIR}/opt/Pusula-AI/nvidia-llm-setup.sh"
+
 cat > "${CHROOT_DIR}/usr/share/applications/pusula-ai.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Pusula AI
-Path=/opt/Pusula-AI/v2.5
-Exec=python3 /opt/Pusula-AI/v2.5/pusula-ai.py
+Path=/opt/Pusula-AI/v2.0
+Exec=python3 /opt/Pusula-AI/v2.0/pusula-ai.py
 Icon=/opt/Pusula-AI/img/logo.png
-Terminal=false
+Terminal=true
 Categories=Education;
 EOF
 

@@ -575,11 +575,11 @@ class App(QtWidgets.QMainWindow):
         self.share_btn.setFixedWidth(90)
         self.share_btn.clicked.connect(self.share_graph)
         add(self.share_btn)
+        h.addStretch()
         self.cooldown_lbl=QtWidgets.QLabel("")
         self.cooldown_lbl.setFixedWidth(150)
         self.cooldown_lbl.setStyleSheet("color:#ff9800;font-weight:bold;padding:0 4px;")
         add(self.cooldown_lbl,0)
-        h.addStretch()
         self.progress=QtWidgets.QLabel("")
         self.progress.setStyleSheet("color:#ff9800;font-weight:bold;padding:0 8px;")
         h.addWidget(self.progress)
@@ -799,16 +799,18 @@ class App(QtWidgets.QMainWindow):
         main_ax.yaxis.set_label_position("right")
         main_ax.tick_params(axis="y",which="both",right=True,labelright=True,left=False,labelleft=False,pad=3)
         main_ax.tick_params(axis="x",which="both",bottom=False,labelbottom=False)
+        main_ax.set_ylabel("")
         if panel_ax is not None:
             panel_ax.set_position([L,B,R-L,VH])
-            panel_ax.yaxis.tick_left()
-            panel_ax.tick_params(axis="y",which="both",left=True,labelleft=True,right=False,labelright=False,pad=3)
+            panel_ax.yaxis.tick_right()
+            panel_ax.tick_params(axis="y",which="both",left=False,labelleft=False,right=True,labelright=True,pad=3)
             panel_ax.tick_params(axis="x",which="both",bottom=True,labelbottom=True)
             panel_ax.set_ylabel("")
         for ax in [main_ax,panel_ax]:
             if ax is not None:
                 for spine in ax.spines.values():
                     spine.set_linewidth(0.5)
+                ax.tick_params(labelsize=10)
         dc_lo=pd.to_numeric(plot_df["DC_LOWER"],errors="coerce").to_numpy()
         dc_hi=pd.to_numeric(plot_df["DC_UPPER"],errors="coerce").to_numpy()
         valid=np.isfinite(dc_lo)&np.isfinite(dc_hi)

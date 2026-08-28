@@ -451,12 +451,13 @@ class Worker(QtCore.QThread):
         except Exception as e:self.error.emit(str(e))
 
 class MLWorker(QtCore.QThread):
-    done=QtCore.pyqtSignal(object,object,object,object)
+    done=QtCore.pyqtSignal(object,object,object,object,str)
     error=QtCore.pyqtSignal(str)
-    def __init__(self,df,tf="1D"):
+    def __init__(self,df,tf="1D",chart_type="candle"):
         super().__init__()
         self._df=df.copy()
         self._tf=tf
+        self._chart_type=chart_type
 
     def run(self):
         try:
@@ -472,7 +473,7 @@ class MLWorker(QtCore.QThread):
             else:
                 df["ML_BUY"]=np.nan
                 df["ML_SELL"]=np.nan
-            self.done.emit(df,pred,info,ml_r)
+            self.done.emit(df,pred,info,ml_r,self._chart_type)
         except Exception as e:
             print(f"\n[ML HATA] {e}",file=sys.stderr)
             print(traceback.format_exc(),file=sys.stderr)
@@ -508,10 +509,14 @@ class App(QtWidgets.QMainWindow):
         super().__init__()
         self.setWindowTitle("Pusula Finans V1.3")
         self.resize(1000,680)
-        self._ml_result=None
-        self._df=None
-        self._ml_worker=None
-        self._ml_info={}
+        self._ml_result_candle=None
+        self._ml_info_candle={}
+        self._ml_result_ha=None
+        self._ml_info_ha={}
+        self._df_candle=None
+        self._df_ha=None
+        self._ml_worker_candle=None
+        self._ml_worker_ha=None
         self._cooldown_remaining=0
         self._view_offset=0
         self._step_index=0
@@ -612,12 +617,19 @@ class App(QtWidgets.QMainWindow):
     def _current_step_size(self):
         return self._STEP_VALUES[self._step_index]
 
+    def _get_current_df(self):
+        if self.chart_type.currentData()=="heikinashi":
+            return self._df_ha
+        else:
+            return self._df_candle
+
     def _current_view_df(self):
-        if self._df is None:return None
-        n=len(self._df)
+        df=self._get_current_df()
+        if df is None:return None
+        n=len(df)
         end=n-self._view_offset
         start=max(0,end-self.MAX_BARS)
-        return self._df.iloc[start:end]
+        return df.iloc[start:end]
 
     def _capture_view_limits(self):
         if not self.axes:return None
@@ -627,8 +639,8 @@ class App(QtWidgets.QMainWindow):
         except Exception:return None
 
     def _step_left(self):
-        if self._df is None:return
-        max_offset=max(0,len(self._df)-self.MAX_BARS)
+        if self._get_current_df() is None:return
+        max_offset=max(0,len(self._get_current_df())-self.MAX_BARS)
         step=self._current_step_size()
         if self._view_offset>=max_offset:return
         limits=self._capture_view_limits()
@@ -636,7 +648,7 @@ class App(QtWidgets.QMainWindow):
         self._render(self._current_view_df(),view_limits=limits)
 
     def _step_right(self):
-        if self._df is None or self._view_offset<=0:return
+        if self._get_current_df() is None or self._view_offset<=0:return
         step=self._current_step_size()
         limits=self._capture_view_limits()
         self._view_offset=max(self._view_offset-step,0)
@@ -659,7 +671,10 @@ class App(QtWidgets.QMainWindow):
         return ha
 
     def _on_chart_type_changed(self):
-        if self._df is not None:self._render(self._current_view_df())
+        if self._get_current_df() is not None:
+            self._view_offset=0
+            self._render(self._current_view_df())
+            self._update_progress_text()
 
     def _start_cooldown(self):
         self._cooldown_remaining=COOLDOWN_SECONDS
@@ -728,37 +743,78 @@ class App(QtWidgets.QMainWindow):
         if self.ccy.currentData()=="USD" and fx_rate>1.0:
             for col in ["Open","High","Low","Close"]:
                 df[col]=df[col]/fx_rate
-        df=donchian(squeeze_momentum(df))
-        df["ML_BUY"]=np.nan
-        df["ML_SELL"]=np.nan
-        self._df=df
+        # Klasik mum verisi
+        df_candle=donchian(squeeze_momentum(df.copy()))
+        df_candle["ML_BUY"]=np.nan
+        df_candle["ML_SELL"]=np.nan
+        # Heiken Ashi verisi
+        df_ha=donchian(squeeze_momentum(self._to_heiken_ashi(df.copy())))
+        df_ha["ML_BUY"]=np.nan
+        df_ha["ML_SELL"]=np.nan
+        self._df_candle=df_candle
+        self._df_ha=df_ha
         self._view_offset=0
         self._render(self._current_view_df())
         self._start_cooldown()
         self.progress.setText("ML eğitiliyor...")
-        if self._ml_worker and self._ml_worker.isRunning():self._ml_worker.terminate()
-        self._ml_worker=MLWorker(df,tf="1D")
-        self._ml_worker.done.connect(self._on_ml_done)
-        self._ml_worker.error.connect(self._on_ml_err)
-        self._ml_worker.start()
+        # ML eğitimlerini başlat
+        if self._ml_worker_candle and self._ml_worker_candle.isRunning():self._ml_worker_candle.terminate()
+        if self._ml_worker_ha and self._ml_worker_ha.isRunning():self._ml_worker_ha.terminate()
+        self._ml_worker_candle=MLWorker(df_candle,tf="1D",chart_type="candle")
+        self._ml_worker_candle.done.connect(self._on_ml_done)
+        self._ml_worker_candle.error.connect(self._on_ml_err)
+        self._ml_worker_ha=MLWorker(df_ha,tf="1D",chart_type="heikinashi")
+        self._ml_worker_ha.done.connect(self._on_ml_done)
+        self._ml_worker_ha.error.connect(self._on_ml_err)
+        self._ml_worker_candle.start()
+        self._ml_worker_ha.start()
 
     def _on_ml_err(self,m):
         self.progress.setText(f"ML Hata: {m}")
         print(f"[ML HATA] {m}",file=sys.stderr)
 
-    def _on_ml_done(self,df,pred,info,ml_r):
-        self._ml_result=ml_r
-        self._ml_info=info
-        self._df=df
-        a=info.get("accuracy",0)
-        tm=(self._ml_result or {}).get("total_return",0)
-        self.progress.setText(f"ML Doğruluk: {a:.1f}%  │  ML: {tm:+.1f}%")
-        self.bt_btn.setEnabled(True)
+    def _on_ml_done(self,df,pred,info,ml_r,chart_type):
+        if chart_type=="candle":
+            self._ml_result_candle=ml_r
+            self._ml_info_candle=info
+            self._df_candle=df
+        else:
+            self._ml_result_ha=ml_r
+            self._ml_info_ha=info
+            self._df_ha=df
+        # Her iki model de tamamlandıysa butonu aktif et ve progress güncelle
+        if self._ml_result_candle is not None and self._ml_result_ha is not None:
+            self.bt_btn.setEnabled(True)
+            self._update_progress_text()
+        # Mevcut grafik türüne göre render et
         self._render(self._current_view_df())
 
+    def _update_progress_text(self):
+        if self._ml_result_candle is not None and self._ml_result_ha is not None:
+            a_c=self._ml_info_candle.get("accuracy",0)
+            t_c=self._ml_result_candle.get("total_return",0)
+            a_h=self._ml_info_ha.get("accuracy",0)
+            t_h=self._ml_result_ha.get("total_return",0)
+            self.progress.setText(f"ML C: %{a_c:.1f} / %{t_c:+.1f}  │  HA: %{a_h:.1f} / %{t_h:+.1f}")
+        elif self._ml_result_candle is not None:
+            a=self._ml_info_candle.get("accuracy",0)
+            t=self._ml_result_candle.get("total_return",0)
+            self.progress.setText(f"ML Candle: %{a:.1f} / %{t:+.1f}  │  HA eğitiliyor...")
+        elif self._ml_result_ha is not None:
+            a=self._ml_info_ha.get("accuracy",0)
+            t=self._ml_result_ha.get("total_return",0)
+            self.progress.setText(f"Candle eğitiliyor...  │  ML HA: %{a:.1f} / %{t:+.1f}")
+
     def show_backtest(self):
-        if self._df is None:return
-        BacktestDialog(self._ml_result,self._ml_info,self._df,parent=self).exec()
+        current_df=self._get_current_df()
+        if current_df is None:return
+        if self.chart_type.currentData()=="heikinashi":
+            ml_r=self._ml_result_ha
+            ml_info=self._ml_info_ha
+        else:
+            ml_r=self._ml_result_candle
+            ml_info=self._ml_info_candle
+        BacktestDialog(ml_r,ml_info,current_df,parent=self).exec()
 
     def _clear(self):
         for w in (self.toolbar,self.canvas):
@@ -772,8 +828,8 @@ class App(QtWidgets.QMainWindow):
 
     def _render(self,df,view_limits=None):
         self._clear()
-        chart_t=self.chart_type.currentData()
-        plot_df=self._to_heiken_ashi(df) if chart_t=="heikinashi" else df
+        if df is None:return
+        plot_df=df  # df zaten doğru indikatörlerle geliyor
         sqz_colors=self._update_sqz_colors(plot_df)
         apds=[mpf.make_addplot(plot_df["DC_BASIS"],type="line",panel=0,width=0.8,color="#FF6D00",secondary_y=False),mpf.make_addplot(plot_df["DC_UPPER"],type="line",panel=0,width=0.8,color="#2962FF",secondary_y=False),mpf.make_addplot(plot_df["DC_LOWER"],type="line",panel=0,width=0.8,color="#2962FF",secondary_y=False),mpf.make_addplot(plot_df["SQZ_VAL"],type="bar",panel=1,width=0.7,color=sqz_colors,secondary_y=False)]
         for col,mk,sz,cl in [("ML_BUY","^",90,"#2979ff"),("ML_SELL","v",90,"#ff6d00")]:

@@ -65,7 +65,7 @@ chroot_install \
     xorriso systemd-sysv network-manager nm-tray wireless-tools wpasupplicant dbus dbus-x11 \
     sudo keyboard-configuration console-setup htop fastfetch vlc vlc-l10n debootstrap cmatrix \
     gdebi qbittorrent flameshot qemu-utils libguestfs-tools guestfs-tools fuse3 gvfs-fuse kpartx \
-    fdisk util-linux soundconverter scrot xdotool fonts-noto-color-emoji
+    fdisk util-linux soundconverter scrot xdotool fonts-noto-color-emoji font-manager
 
 chroot_install \
     task-lxqt-desktop lxqt-core lxqt-config lxqt-admin lxqt-qtplugin lxqt-powermanagement \

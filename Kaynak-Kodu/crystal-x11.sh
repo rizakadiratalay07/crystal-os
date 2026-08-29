@@ -127,7 +127,7 @@ chroot_install \
 chroot_install python3 python3-pip python3-venv falkon || true
 
 chroot "${CHROOT_DIR}" pip3 install --break-system-packages --root-user-action=ignore \
-    yfinance mplfinance scikit-learn PyQt6 sentencepiece requests ijson pandas pyarrow
+    yfinance mplfinance scikit-learn xgboost PyQt6 sentencepiece requests ijson pandas pyarrow
 
 chroot "${CHROOT_DIR}" pip3 install --break-system-packages --root-user-action=ignore \
     --index-url https://download.pytorch.org/whl/cpu torch

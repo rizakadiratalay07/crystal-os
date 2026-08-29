@@ -136,6 +136,25 @@ class BacktestDialog(QtWidgets.QDialog):
         super().__init__(parent); self.setWindowTitle("Backtest & ML Analiz Sonuçları"); self.resize(1050,680); main=QtWidgets.QVBoxLayout(self); main.setContentsMargins(10,10,10,10); tabs=QtWidgets.QTabWidget(); tabs.setStyleSheet("QTabBar::tab{padding:8px 18px;}QTabBar::tab:selected{color:#ff9800;font-weight:bold;}"); main.addWidget(tabs)
         for title,fn,args in [("Performans",self._metrics,(ml_r,ml_info)),("Equity Eğrisi",self._equity,(ml_r,df)),("İşlem Geçmişi (ML)",self._trades,(ml_r,)),("Ek Bilgi",self._ek_bilgi,(ml_info,))]:
             w=QtWidgets.QWidget(); tabs.addTab(w,title); fn(w,*args)
+    def _copy_table_to_clipboard(self, tbl):
+        if tbl is None: return
+        rows = tbl.rowCount()
+        cols = tbl.columnCount()
+        if rows == 0 or cols == 0: return
+        lines = []
+        header = []
+        for c in range(cols):
+            item = tbl.horizontalHeaderItem(c)
+            header.append(item.text() if item else "")
+        lines.append("\t".join(header))
+        for r in range(rows):
+            row_data = []
+            for c in range(cols):
+                item = tbl.item(r, c)
+                row_data.append(item.text() if item else "")
+            lines.append("\t".join(row_data))
+        text = "\n".join(lines)
+        QApplication.clipboard().setText(text)
     def _metrics(self,w,ml_r,info):
         vl=QtWidgets.QVBoxLayout(w); vl.setSpacing(8)
         if info and "accuracy" in info:
@@ -149,13 +168,29 @@ class BacktestDialog(QtWidgets.QDialog):
             tbl.setItem(r,0,QtWidgets.QTableWidgetItem(label)); mo=key in ml_only; mv=float(info.get(key,0)) if (mo and info) else (ml_r.get(key,0) if ml_r else 0); tbl.setItem(r,1,mi(mv,hb))
         vl.addWidget(tbl)
         if "error" in info:vl.addWidget(QtWidgets.QLabel(info["error"]))
+        # Copy button
+        copy_btn = QtWidgets.QPushButton("CTRL+C (Kopyala)")
+        copy_btn.clicked.connect(lambda: self._copy_table_to_clipboard(tbl))
+        hbox = QtWidgets.QHBoxLayout()
+        hbox.addStretch()
+        hbox.addWidget(copy_btn)
+        vl.addLayout(hbox)
     def _ek_bilgi(self,w,info):
         vl=QtWidgets.QVBoxLayout(w)
-        if not info or "top_features" not in info:vl.addWidget(QtWidgets.QLabel("Ek bilgi bulunamadı.")); return
+        if not info or "top_features" not in info:
+            vl.addWidget(QtWidgets.QLabel("Ek bilgi bulunamadı."))
+            return
         top_features=info["top_features"]; tbl=QtWidgets.QTableWidget(len(top_features),2); tbl.setHorizontalHeaderLabels(["Özellik","Önem"]); _tbl_style(tbl)
         for i,(feat,imp) in enumerate(top_features):
             tbl.setItem(i,0,QtWidgets.QTableWidgetItem(feat)); tbl.setItem(i,1,QtWidgets.QTableWidgetItem(f"{imp:.6f}"))
         vl.addWidget(tbl)
+        # Copy button
+        copy_btn = QtWidgets.QPushButton("CTRL+C (Kopyala)")
+        copy_btn.clicked.connect(lambda: self._copy_table_to_clipboard(tbl))
+        hbox = QtWidgets.QHBoxLayout()
+        hbox.addStretch()
+        hbox.addWidget(copy_btn)
+        vl.addLayout(hbox)
     def _equity(self,w,ml_r,df):
         vl=QtWidgets.QVBoxLayout(w); vl.setContentsMargins(0,0,0,0); fig=Figure(figsize=(10,4.5),dpi=100); fig.patch.set_facecolor("white"); ax=fig.add_subplot(111); ax.set_facecolor("white"); bh=df["Close"]/float(df["Close"].iloc[0])*INITIAL_CAPITAL; ax.plot(bh.index,bh.values,color="#888",lw=1.2,ls="--",label="Al & Tut",alpha=0.7)
         if ml_r:ax.plot(ml_r["equity_curve"].index,ml_r["equity_curve"].values,color="#FF9800",lw=1.8,label="ML")
@@ -166,7 +201,9 @@ class BacktestDialog(QtWidgets.QDialog):
         ax.set_title(f"Equity Eğrisi (₺{INITIAL_CAPITAL:,.0f})",color="black",fontsize=11); ax.legend(facecolor="white",labelcolor="black",edgecolor="#aaa",framealpha=0.9); ax.grid(True,alpha=0.25,color="#aaa"); fig.tight_layout(pad=1.5); vl.addWidget(FigureCanvas(fig))
     def _trades(self,w,result):
         vl=QtWidgets.QVBoxLayout(w)
-        if not result or not result.get("trades"):vl.addWidget(QtWidgets.QLabel("İşlem bulunamadı.")); return
+        if not result or not result.get("trades"):
+            vl.addWidget(QtWidgets.QLabel("İşlem bulunamadı."))
+            return
         trades=result["trades"]; tbl=QtWidgets.QTableWidget(len(trades),6); tbl.setHorizontalHeaderLabels(["#","Giriş","Çıkış","Getiri (%)","K/Z (₺)","Komisyon (₺)"]); _tbl_style(tbl); wins=0; tc=0.0
         for i,t in enumerate(trades):
             win=t["return"]>0
@@ -176,7 +213,16 @@ class BacktestDialog(QtWidgets.QDialog):
             for c,v in [(3,f"{t['return']*100:.2f}%"),(4,f"₺{t['pnl']:.2f}")]:
                 it=QtWidgets.QTableWidgetItem(v); it.setForeground(clr); tbl.setItem(i,c,it)
             ci=QtWidgets.QTableWidgetItem(f"₺{cm:.2f}"); ci.setForeground(QtGui.QColor("#ff9800")); tbl.setItem(i,5,ci)
-        vl.addWidget(tbl); s=QtWidgets.QLabel(f"{len(trades)} işlem  │  {wins} kazanan  │  {len(trades)-wins} kaybeden  │  Komisyon: ₺{tc:.2f}"); s.setStyleSheet("padding:6px;color:#ff9800;font-weight:bold;"); vl.addWidget(s)
+        vl.addWidget(tbl)
+        s=QtWidgets.QLabel(f"{len(trades)} işlem  │  {wins} kazanan  │  {len(trades)-wins} kaybeden  │  Komisyon: ₺{tc:.2f}")
+        s.setStyleSheet("padding:6px;color:#ff9800;font-weight:bold;")
+        copy_btn = QtWidgets.QPushButton("CTRL+C (Kopyala)")
+        copy_btn.clicked.connect(lambda: self._copy_table_to_clipboard(tbl))
+        hbox = QtWidgets.QHBoxLayout()
+        hbox.addWidget(s)
+        hbox.addStretch()
+        hbox.addWidget(copy_btn)
+        vl.addLayout(hbox)
 
 class Canvas(FigureCanvas):
     _L,_R,_B,_T,_VH=0.04,0.95,0.06,0.98,0.22

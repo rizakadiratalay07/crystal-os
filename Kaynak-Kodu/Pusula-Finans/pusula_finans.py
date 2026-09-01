@@ -154,7 +154,7 @@ class BacktestDialog(QtWidgets.QDialog):
                 row_data.append(item.text() if item else "")
             lines.append("\t".join(row_data))
         text = "\n".join(lines)
-        QApplication.clipboard().setText(text)
+        QtWidgets.QApplication.clipboard().setText(text)
     def _metrics(self,w,ml_r,info):
         vl=QtWidgets.QVBoxLayout(w); vl.setSpacing(8)
         if info and "accuracy" in info:
@@ -168,7 +168,6 @@ class BacktestDialog(QtWidgets.QDialog):
             tbl.setItem(r,0,QtWidgets.QTableWidgetItem(label)); mo=key in ml_only; mv=float(info.get(key,0)) if (mo and info) else (ml_r.get(key,0) if ml_r else 0); tbl.setItem(r,1,mi(mv,hb))
         vl.addWidget(tbl)
         if "error" in info:vl.addWidget(QtWidgets.QLabel(info["error"]))
-        # Copy button
         copy_btn = QtWidgets.QPushButton("CTRL+C (Kopyala)")
         copy_btn.clicked.connect(lambda: self._copy_table_to_clipboard(tbl))
         hbox = QtWidgets.QHBoxLayout()
@@ -184,7 +183,6 @@ class BacktestDialog(QtWidgets.QDialog):
         for i,(feat,imp) in enumerate(top_features):
             tbl.setItem(i,0,QtWidgets.QTableWidgetItem(feat)); tbl.setItem(i,1,QtWidgets.QTableWidgetItem(f"{imp:.6f}"))
         vl.addWidget(tbl)
-        # Copy button
         copy_btn = QtWidgets.QPushButton("CTRL+C (Kopyala)")
         copy_btn.clicked.connect(lambda: self._copy_table_to_clipboard(tbl))
         hbox = QtWidgets.QHBoxLayout()

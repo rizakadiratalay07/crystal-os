@@ -15,6 +15,8 @@ mkdir -p "${BUILD_DIR}" "${CHROOT_DIR}"
 
 debootstrap --arch=amd64 --include=locales trixie "${CHROOT_DIR}" http://deb.debian.org/debian
 
+cp /etc/resolv.conf "${CHROOT_DIR}/etc/resolv.conf"
+
 mount --bind /dev "${CHROOT_DIR}/dev"
 mount --bind /dev/pts "${CHROOT_DIR}/dev/pts"
 mount --bind /proc "${CHROOT_DIR}/proc"
@@ -70,11 +72,16 @@ chroot_install \
 chroot_install \
     task-lxqt-desktop lxqt-core lxqt-config lxqt-admin lxqt-qtplugin lxqt-powermanagement \
     lxqt-notificationd lxqt-policykit pcmanfm-qt pcmanfm-qt-l10n libfm-qt-l10n qterminal openbox \
-    obconf-qt git curl
+    obconf-qt git curl dex
 
 chroot_install \
     xserver-xorg xserver-xorg-core xserver-xorg-input-all xserver-xorg-video-all xinit \
-    x11-xserver-utils mesa-utils
+    x11-xserver-utils mesa-utils xserver-xorg-video-dummy \
+    xserver-xorg-video-intel xserver-xorg-video-amdgpu xserver-xorg-video-ati \
+    xserver-xorg-video-vesa xserver-xorg-video-fbdev
+
+chroot "${CHROOT_DIR}" apt-get purge -y xserver-xorg-video-nouveau 2>/dev/null || true
+chroot "${CHROOT_DIR}" apt-get autoremove -y 2>/dev/null || true
 
 chroot_install \
     gparted parted eject e2fsprogs dosfstools ntfs-3g exfatprogs xfsprogs rsync \
@@ -124,13 +131,13 @@ chroot_install \
     lxqt-about-l10n lxqt-config-l10n lxqt-session-l10n lxqt-panel-l10n lxqt-policykit-l10n \
     liblxqt-l10n librsvg2-common libqt5svg5
 
-chroot_install python3 python3-pip python3-venv falkon || true
+chroot_install python3 python3-pip python3-venv falkon pipx
 
 chroot "${CHROOT_DIR}" pip3 install --break-system-packages --root-user-action=ignore \
-    yfinance mplfinance scikit-learn xgboost PyQt6 sentencepiece requests ijson pandas pyarrow
+    yfinance mplfinance scikit-learn xgboost PyQt6 sentencepiece requests ijson pandas pyarrow pypdf
 
 chroot "${CHROOT_DIR}" pip3 install --break-system-packages --root-user-action=ignore \
-    --index-url https://download.pytorch.org/whl/cpu torch
+    "jax[cuda12]" flax optax
 
 mkdir -p "${CHROOT_DIR}/etc/pipewire/pipewire.conf.d"
 cat > "${CHROOT_DIR}/etc/pipewire/pipewire.conf.d/10-crystal.conf" <<EOF
@@ -251,6 +258,8 @@ root    hard    memlock   unlimited
 EOF
 
 chroot "${CHROOT_DIR}" systemctl enable NetworkManager
+chroot "${CHROOT_DIR}" systemctl enable udisks2
+chroot "${CHROOT_DIR}" systemctl enable polkit
 
 mkdir -p "${CHROOT_DIR}/etc/initramfs-tools/conf.d" "${CHROOT_DIR}/etc/modprobe.d"
 
@@ -267,6 +276,13 @@ export BOOT=live
 EOF
 
 cat > "${CHROOT_DIR}/etc/initramfs-tools/modules" <<EOF
+i915
+amdgpu
+radeon
+nvidia
+nvidia_modeset
+nvidia_uvm
+nvidia_drm
 snd_hda_intel
 snd_hda_codec
 snd_hda_codec_hdmi
@@ -292,9 +308,71 @@ install kvm_amd /bin/false
 install kvm_intel /bin/false
 EOF
 
-cat > "${CHROOT_DIR}/etc/modprobe.d/blacklist-nvidia-nouveau.conf" <<EOF
+cat > "${CHROOT_DIR}/etc/modprobe.d/blacklist-nouveau.conf" <<EOF
 blacklist nouveau
+blacklist nova_core
+blacklist nova_drm
 options nouveau modeset=0
+install nouveau /bin/false
+install nova_core /bin/false
+install nova_drm /bin/false
+EOF
+
+mkdir -p "${CHROOT_DIR}/etc/X11/xorg.conf.d"
+
+cat > "${CHROOT_DIR}/etc/X11/xorg.conf.d/10-gpu-autodetect.conf" <<'EOF'
+Section "OutputClass"
+    Identifier "NvidiaAuto"
+    MatchDriver "nvidia-drm"
+    Driver "nvidia"
+    Option "AllowEmptyInitialConfiguration" "True"
+    Option "ModeValidation" "AllowNonEdidModes, NoMaxPClkCheck"
+EndSection
+
+Section "OutputClass"
+    Identifier "IntelAuto"
+    MatchDriver "i915"
+    Driver "modesetting"
+EndSection
+
+Section "OutputClass"
+    Identifier "AmdgpuAuto"
+    MatchDriver "amdgpu"
+    Driver "modesetting"
+EndSection
+
+Section "OutputClass"
+    Identifier "RadeonAuto"
+    MatchDriver "radeon"
+    Driver "modesetting"
+EndSection
+EOF
+
+cat > "${CHROOT_DIR}/etc/X11/xorg.conf.d/99-dummy-fallback.conf.disabled" <<'EOF'
+Section "Monitor"
+    Identifier "DummyMonitor"
+    HorizSync 28.0-80.0
+    VertRefresh 48.0-75.0
+    Modeline "1920x1080" 148.50 1920 2448 2492 2640 1080 1084 1089 1125 +Hsync +Vsync
+EndSection
+
+Section "Device"
+    Identifier "DummyDevice"
+    Driver "dummy"
+    VideoRam 256000
+EndSection
+
+Section "Screen"
+    Identifier "DummyScreen"
+    Device "DummyDevice"
+    Monitor "DummyMonitor"
+    DefaultDepth 24
+    SubSection "Display"
+        Depth 24
+        Modes "1920x1080"
+        Virtual 1920 1080
+    EndSubSection
+EndSection
 EOF
 
 cat > "${CHROOT_DIR}/etc/modprobe.d/sound.conf" <<EOF
@@ -396,8 +474,13 @@ if [ -f "${SCRIPT_DIR}/image/crystalos.png" ]; then
     cp "${SCRIPT_DIR}/image/crystalos.png" "${CHROOT_DIR}/usr/share/backgrounds/crystalos.png"
 fi
 
-mkdir -p "${CHROOT_DIR}/etc/xdg/pcmanfm-qt/lxqt"
-cat > "${CHROOT_DIR}/etc/xdg/pcmanfm-qt/lxqt/settings.conf" <<EOF
+mkdir -p "${CHROOT_DIR}/etc/xdg/pcmanfm-qt/default"
+cat > "${CHROOT_DIR}/etc/xdg/pcmanfm-qt/default/settings.conf" <<EOF
+[Volume]
+CloseOnUnmount=true
+MountOnStartup=true
+MountRemovable=true
+
 [System]
 Terminal=qterminal
 TerminalDirCommand=qterminal -w %s
@@ -643,15 +726,13 @@ rsync -a --exclude='v1.5/' --exclude='v2.5/' "${SCRIPT_DIR}/Pusula-AI/" "${CHROO
 chown -R root:root "${CHROOT_DIR}/opt/Pusula-AI"
 find "${CHROOT_DIR}/opt/Pusula-AI" -type d -exec chmod 755 {} \;
 find "${CHROOT_DIR}/opt/Pusula-AI" -type f -exec chmod 644 {} \;
-chroot "${CHROOT_DIR}" ln -sf /opt/Pusula-AI/nvidia-llm-setup.sh /usr/local/bin/nvidia-llm-setup
-chmod +x "${CHROOT_DIR}/opt/Pusula-AI/nvidia-llm-setup.sh"
 
 cat > "${CHROOT_DIR}/usr/share/applications/pusula-ai.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Pusula AI
-Path=/opt/Pusula-AI/v2.0
-Exec=python3 /opt/Pusula-AI/v2.0/pusula-ai.py
+Path=/opt/Pusula-AI/TurkishLLM
+Exec=python3 /opt/Pusula-AI/TurkishLLM/pusula-ai.py
 Icon=/opt/Pusula-AI/img/logo.png
 Terminal=true
 Categories=Education;
@@ -772,17 +853,17 @@ set menu_color_normal=white/black
 set menu_color_highlight=white/magenta
 
 menuentry "CrystalOS - Disk Üzerinden Başlatma" {
-    linux /live/vmlinuz boot=live components quiet splash
+    linux /live/vmlinuz boot=live components quiet splash nvidia-drm.modeset=1
     initrd /live/initrd
 }
 
 menuentry "CrystalOS - RAM Üzerinden Başlatma" {
-    linux /live/vmlinuz boot=live components quiet splash toram
+    linux /live/vmlinuz boot=live components quiet splash toram nvidia-drm.modeset=1
     initrd /live/initrd
 }
 
 menuentry "CrystalOS - Güvenli Mod" {
-    linux /live/vmlinuz boot=live components
+    linux /live/vmlinuz boot=live components nomodeset
     initrd /live/initrd
 }
 

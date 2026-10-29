@@ -115,9 +115,9 @@ echo "10"
 if [ -d /sys/firmware/efi ]; then
     UEFI=1
     parted -s "$DISK" mklabel gpt
-    parted -s "$DISK" mkpart ESP fat32 1MiB 256MiB
+    parted -s "$DISK" mkpart ESP fat32 1MiB 64MiB
     parted -s "$DISK" set 1 esp on
-    parted -s "$DISK" mkpart primary ext4 256MiB 100%
+    parted -s "$DISK" mkpart primary ext4 64MiB 100%
 else
     UEFI=0
     parted -s "$DISK" mklabel msdos
@@ -319,14 +319,54 @@ export LANG=tr_TR.UTF-8
 export LC_ALL=tr_TR.UTF-8
 export LC_MESSAGES=tr_TR.UTF-8
 export LANGUAGE=tr_TR:tr
-xhost +local:
-gio set "$HOME/Desktop/pusula-finans.desktop" metadata::trust true 2>/dev/null || true
-gio set "$HOME/Desktop/crystal-setup.desktop" metadata::trust true 2>/dev/null || true
-gio set "$HOME/Desktop/pusula-ai.desktop" metadata::trust true 2>/dev/null || true
-pulseaudio --start &
-xrdb -merge "$HOME/.Xresources"
-setxkbmap tr
-exec startlxqt
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+export PIPEWIRE_RUNTIME_DIR=/run/user/$(id -u)
+export PULSE_RUNTIME_PATH=/run/user/$(id -u)/pulse
+export PULSE_SERVER=unix:/run/user/$(id -u)/pulse/native
+
+mkdir -p /run/user/$(id -u)
+chmod 700 /run/user/$(id -u)
+
+if [ ! -S /run/user/$(id -u)/pulse/native ]; then
+    mkdir -p /run/user/$(id -u)/pulse
+    chmod 700 /run/user/$(id -u)/pulse
+
+    for proc in pipewire wireplumber pipewire-pulse; do
+        pgrep -x $proc >/dev/null 2>&1 || {
+            $proc >/tmp/$proc.log 2>&1 &
+            for i in $(seq 1 50); do
+                pgrep -x $proc >/dev/null 2>&1 && break
+                [ "$proc" = "pipewire-pulse" ] && [ -S /run/user/$(id -u)/pulse/native ] && break
+                sleep 0.1
+            done
+        }
+    done
+fi
+
+dbus-run-session -- sh -c '
+    export XDG_SESSION_TYPE=x11
+    export XDG_RUNTIME_DIR=/run/user/$(id -u)
+    export PIPEWIRE_RUNTIME_DIR=/run/user/$(id -u)
+    export PULSE_RUNTIME_PATH=/run/user/$(id -u)/pulse
+    export PULSE_SERVER=unix:/run/user/$(id -u)/pulse/native
+    export LANG=tr_TR.UTF-8
+    export LC_ALL=tr_TR.UTF-8
+    export LC_MESSAGES=tr_TR.UTF-8
+    export LANGUAGE=tr_TR:tr
+
+    xhost +local: >/dev/null 2>&1 || true
+
+    gio set "$HOME/Desktop/pusula-finans.desktop" metadata::trust true 2>/dev/null || true
+    gio set "$HOME/Desktop/crystal-setup.desktop" metadata::trust true 2>/dev/null || true
+    gio set "$HOME/Desktop/pusula-ai.desktop" metadata::trust true 2>/dev/null || true
+
+    xrdb -merge "$HOME/.Xresources" 2>/dev/null || true
+    setxkbmap tr >/dev/null 2>&1 || true
+
+    export PULSE_LATENCY_MSEC=30
+
+    exec startlxqt
+'
 EOF
 rm -f /home/$USERNAME/Desktop/crystal-setup.desktop 2>/dev/null || true
 
@@ -466,6 +506,8 @@ EOF
 mkdir -p "$USERHOME/.config/lxqt-panel"
 chroot "$MOUNT" chown -R "$USERNAME:$USERNAME" "/home/$USERNAME"
 chroot "$MOUNT" systemctl enable NetworkManager
+chroot "$MOUNT" systemctl enable udisks2
+chroot "$MOUNT" systemctl enable polkit
 mkdir -p "$MOUNT/etc/gtk-3.0"
 cat > "$MOUNT/etc/gtk-3.0/settings.ini" <<EOF
 [Settings]
@@ -533,8 +575,8 @@ cat > "$MOUNT/usr/share/applications/pusula-ai.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Pusula AI
-Path=/opt/Pusula-AI/v1.5
-Exec=python3 /opt/Pusula-AI/v1.5/pusula-ai.py
+Path=/opt/Pusula-AI/TurkishLLM
+Exec=python3 /opt/Pusula-AI/TurkishLLM/pusula-ai.py
 Icon=/opt/Pusula-AI/img/logo.png
 Terminal=true
 Categories=Education;
